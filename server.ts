@@ -24,26 +24,17 @@ async function startServer() {
     return ((req.headers["x-panel-url"] as string) || "").replace(/\/$/, "");
   }
 
-  app.post("/api/discord/validate", async (req, res) => {
-    try {
-      const token = (req.body.token || "").trim();
-      if (!token) return res.status(400).json({ error: "Token required" });
-      const r = await fetch("https://discord.com/api/v10/users/@me", {
-        headers: { Authorization: `Bot ${token}` },
-      });
-      if (!r.ok) return res.status(401).json({ error: "Invalid Discord bot token" });
-      const data = await r.json();
-      res.json({ valid: true, username: data.username, id: data.id });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  async function safeJson(r: Response): Promise<any> {
+    const text = await r.text();
+    if (!text || !text.trim()) return {};
+    try { return JSON.parse(text); } catch { return { _raw: text }; }
+  }
 
   app.get("/api/servers", async (req, res) => {
     try {
       const r = await fetch(`${panelUrl(req)}/api/client`, { headers: pteroHeaders(req) });
-      const data = await r.json();
-      if (!r.ok) return res.status(r.status).json(data);
+      const data = await safeJson(r);
+      if (!r.ok) return res.status(r.status).json({ error: data?.errors?.[0]?.detail || data?.message || `HTTP ${r.status}` });
       const servers = (data.data || []).map((s: any) => ({
         id: s.attributes.identifier,
         uuid: s.attributes.uuid,
@@ -63,8 +54,8 @@ async function startServer() {
   app.get("/api/servers/:id/resources", async (req, res) => {
     try {
       const r = await fetch(`${panelUrl(req)}/api/client/servers/${req.params.id}/resources`, { headers: pteroHeaders(req) });
-      const data = await r.json();
-      if (!r.ok) return res.status(r.status).json(data);
+      const data = await safeJson(r);
+      if (!r.ok) return res.status(r.status).json({ error: data?.errors?.[0]?.detail || `HTTP ${r.status}` });
       res.json(data.attributes);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -79,7 +70,7 @@ async function startServer() {
         body: JSON.stringify({ signal: req.body.signal }),
       });
       if (r.status === 204) return res.json({ success: true });
-      const data = await r.json();
+      const data = await safeJson(r);
       res.status(r.ok ? 200 : r.status).json(data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -94,7 +85,7 @@ async function startServer() {
         body: JSON.stringify({ command: req.body.command }),
       });
       if (r.status === 204) return res.json({ success: true });
-      const data = await r.json();
+      const data = await safeJson(r);
       res.status(r.ok ? 200 : r.status).json(data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -104,8 +95,8 @@ async function startServer() {
   app.get("/api/servers/:id/websocket", async (req, res) => {
     try {
       const r = await fetch(`${panelUrl(req)}/api/client/servers/${req.params.id}/websocket`, { headers: pteroHeaders(req) });
-      const data = await r.json();
-      if (!r.ok) return res.status(r.status).json(data);
+      const data = await safeJson(r);
+      if (!r.ok) return res.status(r.status).json({ error: data?.errors?.[0]?.detail || `HTTP ${r.status}` });
       res.json(data.data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -119,8 +110,8 @@ async function startServer() {
         `${panelUrl(req)}/api/client/servers/${req.params.id}/files/list?directory=${encodeURIComponent(dir)}`,
         { headers: pteroHeaders(req) }
       );
-      const data = await r.json();
-      if (!r.ok) return res.status(r.status).json(data);
+      const data = await safeJson(r);
+      if (!r.ok) return res.status(r.status).json({ error: data?.errors?.[0]?.detail || `HTTP ${r.status}` });
       const files = (data.data || []).map((f: any) => ({
         name: f.attributes.name,
         is_file: f.attributes.is_file,
@@ -141,8 +132,8 @@ async function startServer() {
         { headers: pteroHeaders(req) }
       );
       if (!r.ok) {
-        const data = await r.json().catch(() => ({}));
-        return res.status(r.status).json(data);
+        const data = await safeJson(r);
+        return res.status(r.status).json({ error: data?.errors?.[0]?.detail || `HTTP ${r.status}` });
       }
       const text = await r.text();
       res.json({ content: text });
@@ -167,7 +158,7 @@ async function startServer() {
         }
       );
       if (r.status === 204) return res.json({ success: true });
-      const data = await r.json().catch(() => ({}));
+      const data = await safeJson(r);
       res.status(r.ok ? 200 : r.status).json(data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -185,7 +176,7 @@ async function startServer() {
         }
       );
       if (r.status === 204) return res.json({ success: true });
-      const data = await r.json().catch(() => ({}));
+      const data = await safeJson(r);
       res.status(r.ok ? 200 : r.status).json(data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
