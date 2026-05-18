@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Reboot Cord</title>
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+    <div class="dashboard">
+        <h1>Welcome to Reboot Cord</h1>
+        <p class="tagline">Reboot World • 24/7 Bot Hosting</p>
+
+        <div class="card">
+            <h2>Your Bots</h2>
+            <p id="bots-list">No bots yet.</p>
+            <button onclick="uploadBot()">Upload New Bot</button>
+        </div>
+
+        <div class="card">
+            <h2>Statistics</h2>
+            <p>Active Users: <span id="active-users">0</span></p>
+        </div>
+    </div>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>
