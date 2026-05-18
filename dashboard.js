@@ -1,408 +1,123 @@
-* { margin: 0; padding: 0; box-sizing: border-box; }
+const username = localStorage.getItem('rc_user');
+if (!username) window.location.href = '/';
 
-body {
-    font-family: 'Segoe UI', sans-serif;
-    background: #0a0a0a;
-    color: #fff;
-    min-height: 100vh;
+let selectedLang = null;
+
+document.getElementById('nav-username').textContent = username;
+
+function logout() {
+    localStorage.removeItem('rc_user');
+    window.location.href = '/';
 }
 
-.topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 32px;
-    height: 60px;
-    background: #0d0d0d;
-    border-bottom: 1px solid #1a1a1a;
-    position: sticky;
-    top: 0;
-    z-index: 10;
+function openModal() {
+    selectedLang = null;
+    document.getElementById('proj-name').value = '';
+    document.getElementById('create-msg').textContent = '';
+    document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('selected'));
+    document.getElementById('step1').classList.remove('hidden');
+    document.getElementById('step2').classList.add('hidden');
+    document.getElementById('modal').classList.remove('hidden');
 }
 
-.brand {
-    font-size: 1.2rem;
-    font-weight: 800;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+function closeModal() {
+    document.getElementById('modal').classList.add('hidden');
 }
 
-.brand span:not(.brand-dot) {
-    color: #e74c3c;
+function pickLang(el) {
+    document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('selected'));
+    el.classList.add('selected');
+    selectedLang = el.dataset.lang;
 }
 
-.brand-dot {
-    width: 8px;
-    height: 8px;
-    background: #e74c3c;
-    border-radius: 50%;
-    box-shadow: 0 0 8px #e74c3c;
-    display: inline-block;
+async function createProject() {
+    const name = document.getElementById('proj-name').value.trim();
+    const msg = document.getElementById('create-msg');
+    if (!name) { msg.textContent = 'Enter a project name'; return; }
+    if (!selectedLang) { msg.textContent = 'Select a language'; return; }
+
+    document.getElementById('step1').classList.add('hidden');
+    document.getElementById('step2').classList.remove('hidden');
+    document.getElementById('progress-title').textContent = 'Setting up ' + name + '...';
+
+    let pct = 0;
+    const bar = document.getElementById('prog-bar');
+    const pctText = document.getElementById('prog-pct');
+
+    const iv = setInterval(() => {
+        pct += Math.random() * 18;
+        if (pct >= 90) { pct = 90; clearInterval(iv); }
+        bar.style.width = pct + '%';
+        pctText.textContent = Math.floor(pct) + '%';
+    }, 120);
+
+    const res = await fetch('/api/servers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, name, lang: selectedLang })
+    });
+    const data = await res.json();
+
+    clearInterval(iv);
+    bar.style.width = '100%';
+    pctText.textContent = '100%';
+
+    setTimeout(() => {
+        closeModal();
+        if (data.success) {
+            loadServers();
+        } else {
+            document.getElementById('step1').classList.remove('hidden');
+            document.getElementById('step2').classList.add('hidden');
+            document.getElementById('create-msg').textContent = data.message;
+        }
+    }, 500);
 }
 
-.user-area {
-    display: flex;
-    align-items: center;
-    gap: 16px;
+function langIcon(lang) {
+    if (lang === 'js') return '⚡';
+    if (lang === 'py') return '🐍';
+    return '🌙';
 }
 
-.user-area span {
-    color: #666;
-    font-size: 0.9rem;
+function renderCard(server) {
+    const card = document.createElement('div');
+    card.className = 'server-card';
+    const isOnline = server.status === 'online';
+    card.innerHTML =
+        '<div class="card-top">' +
+            '<div class="card-icon">' + langIcon(server.lang) + '</div>' +
+            '<span class="status-dot ' + (isOnline ? 'online' : 'offline') + '"></span>' +
+        '</div>' +
+        '<div class="card-mid">' +
+            '<div class="card-name">' + escapeHTML(server.name) + '</div>' +
+            '<span class="card-lang">' + server.lang + '</span>' +
+            '<div class="card-status-text' + (isOnline ? ' running' : '') + '">' +
+                (isOnline ? 'Running' : 'Offline') +
+            '</div>' +
+        '</div>' +
+        '<button class="btn-manage" onclick="window.location.href=\'/dashboard/' + encodeURIComponent(server.slug) + '\'">Manage Server Project</button>';
+    return card;
 }
 
-.user-area button {
-    background: #1a1a1a;
-    color: #999;
-    border: 1px solid #222;
-    border-radius: 8px;
-    padding: 7px 14px;
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.2s;
+function escapeHTML(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-.user-area button:hover {
-    color: #fff;
-    border-color: #333;
+async function loadServers() {
+    const res = await fetch('/api/servers?username=' + encodeURIComponent(username));
+    const data = await res.json();
+    const grid = document.getElementById('servers-grid');
+    const empty = document.getElementById('empty-state');
+    grid.innerHTML = '';
+
+    if (!data.success || data.servers.length === 0) {
+        grid.appendChild(empty);
+        empty.classList.remove('hidden');
+        return;
+    }
+
+    data.servers.forEach(s => grid.appendChild(renderCard(s)));
 }
 
-.main {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 40px 24px;
-}
-
-.page-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    margin-bottom: 36px;
-    gap: 16px;
-}
-
-.page-header h2 {
-    font-size: 1.6rem;
-    font-weight: 800;
-}
-
-.page-header p {
-    color: #555;
-    font-size: 0.9rem;
-    margin-top: 4px;
-}
-
-.btn-create {
-    background: #e74c3c;
-    color: #fff;
-    border: none;
-    border-radius: 10px;
-    padding: 12px 22px;
-    font-size: 0.9rem;
-    font-weight: 700;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: opacity 0.2s;
-}
-
-.btn-create:hover {
-    opacity: 0.85;
-}
-
-.servers-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 240px));
-    gap: 20px;
-}
-
-.empty-state {
-    grid-column: 1 / -1;
-    color: #333;
-    font-size: 0.95rem;
-    padding: 60px 0;
-    text-align: center;
-}
-
-.server-card {
-    background: #111;
-    border: 1px solid #1e1e1e;
-    border-radius: 14px;
-    padding: 24px;
-    width: 240px;
-    height: 240px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    position: relative;
-    overflow: hidden;
-    transition: border-color 0.2s, transform 0.2s;
-}
-
-.server-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: #e74c3c;
-    border-radius: 14px 14px 0 0;
-}
-
-.server-card:hover {
-    border-color: #2a2a2a;
-    transform: translateY(-2px);
-}
-
-.card-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-}
-
-.card-icon {
-    width: 40px;
-    height: 40px;
-    background: #1a1a1a;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.1rem;
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    margin-top: 4px;
-    flex-shrink: 0;
-}
-
-.status-dot.online {
-    background: #2ecc71;
-    box-shadow: 0 0 6px #2ecc71;
-}
-
-.status-dot.offline {
-    background: #444;
-}
-
-.card-mid {
-    flex: 1;
-    padding: 16px 0 8px;
-}
-
-.card-name {
-    font-size: 1.05rem;
-    font-weight: 700;
-    margin-bottom: 6px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.card-lang {
-    display: inline-block;
-    background: #1e1e1e;
-    color: #666;
-    font-size: 0.72rem;
-    font-weight: 600;
-    padding: 3px 8px;
-    border-radius: 20px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.card-status-text {
-    font-size: 0.78rem;
-    color: #444;
-    margin-top: 8px;
-}
-
-.card-status-text.running {
-    color: #2ecc71;
-}
-
-.btn-manage {
-    background: #1a1a1a;
-    color: #ccc;
-    border: 1px solid #2a2a2a;
-    border-radius: 9px;
-    padding: 11px 0;
-    width: 100%;
-    font-size: 0.82rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-    text-align: center;
-}
-
-.btn-manage:hover {
-    background: #e74c3c;
-    color: #fff;
-    border-color: #e74c3c;
-}
-
-.modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.85);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-}
-
-.modal-overlay.hidden {
-    display: none;
-}
-
-.modal-box {
-    background: #111;
-    border: 1px solid #1e1e1e;
-    border-radius: 18px;
-    padding: 36px;
-    width: 100%;
-    max-width: 440px;
-}
-
-.modal-box h3 {
-    font-size: 1.3rem;
-    font-weight: 800;
-    margin-bottom: 24px;
-}
-
-.modal-box input {
-    width: 100%;
-    background: #0d0d0d;
-    border: 1px solid #222;
-    border-radius: 10px;
-    padding: 14px 16px;
-    color: #fff;
-    font-size: 0.95rem;
-    outline: none;
-    transition: border-color 0.2s;
-    margin-bottom: 20px;
-}
-
-.modal-box input:focus {
-    border-color: #e74c3c;
-}
-
-.modal-box input::placeholder {
-    color: #444;
-}
-
-.field-label {
-    font-size: 0.8rem;
-    color: #555;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-bottom: 10px;
-}
-
-.lang-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 8px;
-    margin-bottom: 28px;
-}
-
-.lang-btn {
-    background: #0d0d0d;
-    border: 1px solid #222;
-    border-radius: 10px;
-    color: #666;
-    padding: 12px 8px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.lang-btn:hover {
-    border-color: #444;
-    color: #ccc;
-}
-
-.lang-btn.selected {
-    border-color: #e74c3c;
-    color: #fff;
-    background: #1a0d0d;
-}
-
-.modal-actions {
-    display: flex;
-    gap: 10px;
-}
-
-.btn-cancel {
-    flex: 1;
-    background: #0d0d0d;
-    border: 1px solid #222;
-    border-radius: 10px;
-    color: #666;
-    padding: 13px;
-    font-size: 0.9rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.btn-cancel:hover {
-    color: #fff;
-}
-
-.btn-submit {
-    flex: 2;
-    background: #e74c3c;
-    border: none;
-    border-radius: 10px;
-    color: #fff;
-    padding: 13px;
-    font-size: 0.9rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: opacity 0.2s;
-}
-
-.btn-submit:hover {
-    opacity: 0.85;
-}
-
-.hidden {
-    display: none;
-}
-
-.progress-track {
-    width: 100%;
-    height: 4px;
-    background: #1e1e1e;
-    border-radius: 4px;
-    overflow: hidden;
-    margin-bottom: 12px;
-}
-
-.progress-bar {
-    height: 100%;
-    background: #e74c3c;
-    width: 0%;
-    transition: width 0.3s;
-    border-radius: 4px;
-}
-
-.progress-pct {
-    text-align: center;
-    font-size: 0.9rem;
-    color: #555;
-}
-
-.msg {
-    color: #e74c3c;
-    font-size: 0.82rem;
-    margin-top: 12px;
-    text-align: center;
-    min-height: 16px;
-}
+loadServers();
