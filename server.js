@@ -9,8 +9,6 @@ let users = [];
 let inviteCodes = new Map();
 let blacklisted = new Set();
 
-const OWNER_ID = "841749813702688858";
-
 app.post('/register', (req, res) => {
     const { username, password, invite } = req.body;
     if (blacklisted.has(invite) || blacklisted.has(username)) {
@@ -60,7 +58,7 @@ app.get('/dashboard', (req, res) => {
     res.sendFile(path.join(__dirname, 'dashboard.html'));
 });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Reboot Cord running on http://localhost:${PORT}`);
+    console.log(`Reboot Cord running on port ${PORT}`);
 });
