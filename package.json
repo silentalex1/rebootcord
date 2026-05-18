@@ -1,11 +1,9 @@
 {
   "name": "rebootcord",
   "version": "1.0.0",
-  "description": "Reboot Cord - Reboot World",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "bot": "node bot.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
