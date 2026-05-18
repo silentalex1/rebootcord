@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reboot Cord - Reboot World</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Reboot Cord</h1>
+        <p class="tagline">Reboot World • Friends Only</p>
+
+        <div class="tab-container">
+            <button class="tab-btn active" onclick="showTab(0)">Create Account</button>
+            <button class="tab-btn" onclick="showTab(1)">Login</button>
+        </div>
+
+        <div id="register-tab" class="tab-content">
+            <h2>Create your account</h2>
+            <form id="register-form">
+                <input type="text" id="reg-username" placeholder="Enter your username" required>
+                <input type="password" id="reg-password" placeholder="Enter your password" required>
+                <input type="text" id="invite-code" placeholder="rebootcord-xxxxx-xxxxxxx" required>
+                <button type="submit">Create Account</button>
+            </form>
+        </div>
+
+        <div id="login-tab" class="tab-content" style="display: none;">
+            <h2>Login to Account</h2>
+            <form id="login-form">
+                <input type="text" id="login-username" placeholder="Enter your username" required>
+                <input type="password" id="login-password" placeholder="Enter your password" required>
+                <button type="submit">Login to Account</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
