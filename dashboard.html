@@ -4,22 +4,53 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Reboot Cord</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="dashboard.css">
 </head>
 <body>
     <div class="dashboard">
-        <h1>Welcome to Reboot Cord</h1>
+        <div class="header">
+            <h1>Welcome to Reboot Cord</h1>
+            <button onclick="showCreateModal()" class="create-btn">Create Server</button>
+        </div>
         <p class="tagline">Reboot World • 24/7 Bot Hosting</p>
 
         <div class="card">
             <h2>Your Bots</h2>
             <p id="bots-list">No bots yet.</p>
-            <button onclick="uploadBot()">Upload New Bot</button>
         </div>
 
         <div class="card">
             <h2>Statistics</h2>
             <p>Active Users: <span id="active-users">0</span></p>
+        </div>
+    </div>
+
+    <div id="create-modal" class="modal hidden">
+        <div class="modal-content">
+            <div id="step-1">
+                <h2 class="text-2xl mb-6">Create New Server</h2>
+                <input id="project-name" type="text" class="w-full p-4 rounded-xl bg-zinc-900 border border-zinc-700 text-white" placeholder="Enter your discord bot project name">
+                
+                <div class="mt-6">
+                    <p class="mb-3 text-zinc-400">Select Language</p>
+                    <div class="grid grid-cols-3 gap-4">
+                        <button onclick="selectLang(this)" data-lang="js" class="lang-btn p-6 rounded-2xl border-2 border-zinc-700 hover:border-blue-500">JavaScript</button>
+                        <button onclick="selectLang(this)" data-lang="py" class="lang-btn p-6 rounded-2xl border-2 border-zinc-700 hover:border-blue-500">Python</button>
+                        <button onclick="selectLang(this)" data-lang="lua" class="lang-btn p-6 rounded-2xl border-2 border-zinc-700 hover:border-blue-500">Lua</button>
+                    </div>
+                </div>
+
+                <button id="create-server-btn" onclick="startCreation()" class="mt-8 w-full py-4 rounded-xl text-black font-bold text-lg bg-zinc-700 cursor-not-allowed">Create Server</button>
+            </div>
+
+            <div id="step-2" class="hidden">
+                <h2 id="setup-title" class="text-2xl mb-8">Setting up your server...</h2>
+                <div class="w-full bg-zinc-800 h-3 rounded-full overflow-hidden">
+                    <div id="progress-bar" class="h-full bg-white w-0 transition-all duration-300"></div>
+                </div>
+                <p id="progress-text" class="text-center mt-4 text-xl">0%</p>
+            </div>
         </div>
     </div>
 
