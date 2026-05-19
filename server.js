@@ -94,7 +94,7 @@ wss.on('connection', (ws, req) => {
         if (p) {
           const pDir = path.join(PROJECTS_DIR, String(p.id));
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-          const cmd = p.lang === 'Python' ? `pip install ${data.pkg}` : `npm install ${data.pkg}`;
+          const cmd = p.lang === 'Python' ? `pip install ${data.pkg} --break-system-packages` : `npm install ${data.pkg}`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
           cp.exec(cmd, { cwd: pDir }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
@@ -354,8 +354,18 @@ app.post('/api/projects/:id/start', async (req, res) => {
     const proc = cp.spawn('java', ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir });
     procs[p.id] = proc;
     
-    proc.stdout.on('data', d => broadcastLog(u, p.id, d.toString().trim(), 'server'));
-    proc.stderr.on('data', d => broadcastLog(u, p.id, d.toString().trim(), 'warn'));
+    proc.stdout.on('data', d => {
+      d.toString().split('\n').forEach(line => {
+        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'server');
+      });
+    });
+    
+    proc.stderr.on('data', d => {
+      d.toString().split('\n').forEach(line => {
+        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'warn');
+      });
+    });
+    
     proc.on('close', () => { p.running = false; saveDB(); broadcastLog(u, p.id, '[System] Process exited.', 'sys'); });
 
   } else {
@@ -369,8 +379,18 @@ app.post('/api/projects/:id/start', async (req, res) => {
     const proc = cp.spawn(cmd, [mainFile], { cwd: pDir, env: { ...process.env, BOT_TOKEN: p.botToken || '' } });
     procs[p.id] = proc;
 
-    proc.stdout.on('data', d => broadcastLog(u, p.id, d.toString().trim(), 'info'));
-    proc.stderr.on('data', d => broadcastLog(u, p.id, d.toString().trim(), 'err'));
+    proc.stdout.on('data', d => {
+      d.toString().split('\n').forEach(line => {
+        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'info');
+      });
+    });
+    
+    proc.stderr.on('data', d => {
+      d.toString().split('\n').forEach(line => {
+        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'err');
+      });
+    });
+    
     proc.on('close', () => { p.running = false; saveDB(); broadcastLog(u, p.id, '[System] Process exited.', 'sys'); });
   }
 
