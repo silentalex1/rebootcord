@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reboot Cord</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <span class="logo-dot"></span>
+            <h1>Reboot<span>Cord</span></h1>
+        </div>
+        <p class="tagline">24/7 Discord Bot Hosting</p>
+        <div class="tabs">
+            <button class="tab active" onclick="showTab(0)">Register</button>
+            <button class="tab" onclick="showTab(1)">Login</button>
+        </div>
+        <div id="tab-register" class="form-box">
+            <input type="text" id="reg-username" placeholder="Username">
+            <input type="password" id="reg-password" placeholder="Password">
+            <input type="text" id="invite-code" placeholder="Invite code (rebootcord-xxxxx)">
+            <button onclick="register()">Create Account</button>
+            <p id="reg-msg" class="msg"></p>
+        </div>
+        <div id="tab-login" class="form-box hidden">
+            <input type="text" id="login-username" placeholder="Username">
+            <input type="password" id="login-password" placeholder="Password">
+            <button onclick="login()">Login</button>
+            <p id="login-msg" class="msg"></p>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

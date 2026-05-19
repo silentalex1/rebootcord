@@ -1,0 +1,133 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #0a0a0a;
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.container {
+    width: 100%;
+    max-width: 420px;
+    padding: 20px;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    justify-content: center;
+}
+
+.logo-dot {
+    width: 12px;
+    height: 12px;
+    background: #e74c3c;
+    border-radius: 50%;
+    display: block;
+    box-shadow: 0 0 10px #e74c3c;
+}
+
+h1 {
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+}
+
+h1 span {
+    color: #e74c3c;
+}
+
+.tagline {
+    text-align: center;
+    color: #555;
+    font-size: 0.85rem;
+    margin-bottom: 32px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.tabs {
+    display: flex;
+    gap: 4px;
+    background: #111;
+    border-radius: 10px;
+    padding: 4px;
+    margin-bottom: 24px;
+}
+
+.tab {
+    flex: 1;
+    padding: 10px;
+    background: transparent;
+    border: none;
+    color: #666;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.tab.active {
+    background: #1a1a1a;
+    color: #fff;
+}
+
+.form-box {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.form-box.hidden {
+    display: none;
+}
+
+.form-box input {
+    background: #111;
+    border: 1px solid #222;
+    border-radius: 10px;
+    padding: 14px 16px;
+    color: #fff;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.form-box input:focus {
+    border-color: #e74c3c;
+}
+
+.form-box input::placeholder {
+    color: #444;
+}
+
+.form-box button {
+    background: #e74c3c;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    margin-top: 4px;
+}
+
+.form-box button:hover {
+    opacity: 0.85;
+}
+
+.msg {
+    text-align: center;
+    font-size: 0.85rem;
+    color: #e74c3c;
+    min-height: 16px;
+}
