@@ -118,6 +118,7 @@ app.post('/register', (req, res) => {
   const code = invite.startsWith('rebootcord-') ? invite : 'rebootcord-' + invite;
   if (db.blacklisted.includes(code) || db.blacklisted.includes(username)) return res.json({ success: false, message: 'Blacklisted' });
   if (!db.inviteCodes[code]) return res.json({ success: false, message: 'Invalid invite code' });
+  if (db.inviteCodes[code] !== true && db.inviteCodes[code] !== username) return res.json({ success: false, message: 'Invite code is bound to your Discord Username only' });
   if (db.users.find(u => u.username === username)) return res.json({ success: false, message: 'Username taken' });
   db.users.push({ username, password, invite: code, projects: [] });
   delete db.inviteCodes[code];
@@ -175,6 +176,22 @@ app.post('/api/projects', (req, res) => {
     }
   });
   saveDB();
+  res.json({ success: true });
+});
+
+app.post('/api/createcode', (req, res) => {
+  const { code, user } = req.body;
+  if (code) { db.inviteCodes[code] = user || true; saveDB(); }
+  res.json({ success: true });
+});
+
+app.get('/api/stats', (req, res) => {
+  res.json({ activeUsers: db.users.length, totalInvites: Object.keys(db.inviteCodes).length });
+});
+
+app.post('/api/blacklist', (req, res) => {
+  const { key } = req.body;
+  if (key && !db.blacklisted.includes(key)) { db.blacklisted.push(key); saveDB(); }
   res.json({ success: true });
 });
 
