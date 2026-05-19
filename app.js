@@ -1,3 +1,4 @@
+javascript
 const MC_VERSIONS = [
   "1.21.5","1.21.4","1.21.3","1.21.2","1.21.1","1.21",
   "1.20.6","1.20.5","1.20.4","1.20.3","1.20.2","1.20.1","1.20",
@@ -47,7 +48,7 @@ const state = {
 let ws;
 function connectWS() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${protocol}//${location.host}`);
+  ws = new WebSocket(protocol + '//' + location.host);
   ws.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
@@ -90,15 +91,25 @@ function getTime() {
 
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (k.startsWith("on")) node.addEventListener(k.slice(2).toLowerCase(), v);
-    else if (k === "className") node.className = v;
-    else if (k === "style" && typeof v === "object") Object.assign(node.style, v);
-    else node.setAttribute(k, v);
+  const attributes = attrs || {};
+  for (const k of Object.keys(attributes)) {
+    const v = attributes[k];
+    if (k === "className") {
+      node.className = v;
+    } else if (k === "style" && typeof v === "object") {
+      Object.assign(node.style, v);
+    } else {
+      node.setAttribute(k, v);
+    }
   }
-  for (const c of children.flat(Infinity)) {
+  const flatChildren = children.flat(Infinity);
+  for (const c of flatChildren) {
     if (c == null) continue;
-    node.append(typeof c === "string" ? document.createTextNode(c) : c);
+    if (typeof c === "string") {
+      node.append(document.createTextNode(c));
+    } else {
+      node.append(c);
+    }
   }
   return node;
 }
@@ -174,10 +185,15 @@ function switchFile(filename) {
 function render() {
   const app = document.getElementById("app");
   const frag = document.createDocumentFragment();
-  if (state.loading) frag.appendChild(renderLoading());
-  else if (state.page === "projects") frag.appendChild(renderProjectsPage());
-  else if (state.page === "bot-dashboard") frag.appendChild(renderBotDashboard());
-  else if (state.page === "mc-dashboard") frag.appendChild(renderMcDashboard());
+  if (state.loading) {
+    frag.appendChild(renderLoading());
+  } else if (state.page === "projects") {
+    frag.appendChild(renderProjectsPage());
+  } else if (state.page === "bot-dashboard") {
+    frag.appendChild(renderBotDashboard());
+  } else if (state.page === "mc-dashboard") {
+    frag.appendChild(renderMcDashboard());
+  }
   app.textContent = "";
   app.appendChild(frag);
   scrollConsolesToBottom();
@@ -209,7 +225,8 @@ function renderNav() {
   logo.appendChild(el("span", { className: "nav-logo-t" }, " Cord"));
   const right = el("div", { className: "nav-right" });
   right.appendChild(el("span", { className: "nav-user" }, state.username));
-  const logoutBtn = el("button", { className: "btn-logout-nav", onClick: () => { fetch("/logout", { method:"POST" }).finally(() => { window.location.href = "/"; }); } });
+  const logoutBtn = el("button", { className: "btn-logout-nav" });
+  logoutBtn.onclick = () => { fetch("/logout", { method:"POST" }).finally(() => { window.location.href = "/"; }); };
   logoutBtn.appendChild(svgIcon("logout"));
   logoutBtn.appendChild(document.createTextNode(" Logout"));
   right.appendChild(logoutBtn);
@@ -227,7 +244,8 @@ function renderProjectsPage() {
   titleDiv.appendChild(el("h1", {}, "Your Projects"));
   titleDiv.appendChild(el("p", {}, "Manage your Discord bots and Minecraft servers"));
   header.appendChild(titleDiv);
-  const btnNew = el("button", { className: "btn-new", onClick: () => { state.showNewModal = true; scheduleRender(); } });
+  const btnNew = el("button", { className: "btn-new" });
+  btnNew.onclick = () => { state.showNewModal = true; scheduleRender(); };
   btnNew.appendChild(svgIcon("plus"));
   btnNew.appendChild(document.createTextNode(" New Project"));
   header.appendChild(btnNew);
@@ -239,7 +257,8 @@ function renderProjectsPage() {
     empty.appendChild(emptyIcon);
     empty.appendChild(el("div", { className: "empty-title" }, "No projects yet"));
     empty.appendChild(el("div", { className: "empty-sub" }, "Create your first Discord bot or Minecraft server to get started."));
-    const emptyBtn = el("button", { className: "btn-new", style: { margin:"0 auto" }, onClick: () => { state.showNewModal = true; scheduleRender(); } });
+    const emptyBtn = el("button", { className: "btn-new", style: { margin:"0 auto" } });
+    emptyBtn.onclick = () => { state.showNewModal = true; scheduleRender(); };
     emptyBtn.appendChild(svgIcon("plus"));
     emptyBtn.appendChild(document.createTextNode(" Create Project"));
     empty.appendChild(emptyBtn);
@@ -265,15 +284,18 @@ function renderProjectCard(p) {
   card.appendChild(top);
   card.appendChild(el("div", { className: "card-name" }, p.name));
   const tags = el("div", { className: "card-tags" });
-  tags.appendChild(el("span", { className: "tag" }, isMc ? (p.serverType + " " + p.version) : p.lang));
+  tags.appendChild(el("span", { className: "tag" }, isMc ? p.serverType + " " + p.version : p.lang));
   tags.appendChild(el("span", { className: "tag " + (p.running ? "running" : "stopped") }, p.running ? "Running" : "Stopped"));
   if (isMc && p.port) tags.appendChild(el("span", { className: "tag discord-tag" }, "Port: " + p.port));
   card.appendChild(tags);
   const actions = el("div", { className: "card-actions" });
-  const manage = el("button", { className: "btn-manage", onClick: () => openProject(p.id) }, "Manage");
-  const stopStartBtn = el("button", { className: "btn-card-toggle " + (p.running ? "running" : "stopped"), onClick: (e) => { e.stopPropagation(); toggleRunning(p); } });
+  const manage = el("button", { className: "btn-manage" }, "Manage");
+  manage.onclick = () => openProject(p.id);
+  const stopStartBtn = el("button", { className: "btn-card-toggle " + (p.running ? "running" : "stopped") });
+  stopStartBtn.onclick = (e) => { e.stopPropagation(); toggleRunning(p); };
   stopStartBtn.appendChild(svgIcon(p.running ? "stop" : "play"));
-  const del = el("button", { className: "btn-delete", onClick: () => deleteProject(p.id) }, "Delete");
+  const del = el("button", { className: "btn-delete" }, "Delete");
+  del.onclick = () => deleteProject(p.id);
   actions.appendChild(manage);
   actions.appendChild(stopStartBtn);
   actions.appendChild(del);
@@ -282,19 +304,22 @@ function renderProjectCard(p) {
 }
 
 function renderModal() {
-  const overlay = el("div", { className: "modal-overlay", onClick: (ev) => { if (ev.target === overlay) { state.showNewModal = false; scheduleRender(); } } });
+  const overlay = el("div", { className: "modal-overlay" });
+  overlay.onclick = (ev) => { if (ev.target === overlay) { state.showNewModal = false; scheduleRender(); } };
   const modal = el("div", { className: "modal" });
   modal.appendChild(el("h2", {}, "New Project"));
   const isMc = state.newType === "minecraft";
   const tabs = el("div", { className: "modal-type-tabs" });
 
-  const tabDis = el("button", { className: "type-tab" + (!isMc ? " active discord" : ""), onClick: () => { state.newType = "discord"; scheduleRender(); } });
+  const tabDis = el("button", { className: "type-tab" + (!isMc ? " active discord" : "") });
+  tabDis.onclick = () => { state.newType = "discord"; scheduleRender(); };
   const disIconWrap = el("div", { className: "type-tab-icon" });
   disIconWrap.appendChild(svgIcon("discord"));
   tabDis.appendChild(disIconWrap);
   tabDis.appendChild(document.createTextNode("Discord Bot"));
 
-  const tabMc = el("button", { className: "type-tab" + (isMc ? " active mc" : ""), onClick: () => { state.newType = "minecraft"; scheduleRender(); } });
+  const tabMc = el("button", { className: "type-tab" + (isMc ? " active mc" : "") });
+  tabMc.onclick = () => { state.newType = "minecraft"; scheduleRender(); };
   const mcIconWrap = el("div", { className: "type-tab-icon" });
   mcIconWrap.appendChild(svgIcon("pickaxe"));
   tabMc.appendChild(mcIconWrap);
@@ -320,7 +345,9 @@ function renderModal() {
     stGroup.appendChild(el("label", { className: "form-label" }, "Server Type"));
     const stGrid = el("div", { className: "lang-grid" });
     MC_SERVER_TYPES.forEach(t => {
-      stGrid.appendChild(el("button", { className: "lang-btn mc" + (t === state.newMcServerType ? " active" : ""), onClick: () => { state.newMcServerType = t; scheduleRender(); } }, t));
+      const btn = el("button", { className: "lang-btn mc" + (t === state.newMcServerType ? " active" : "") }, t);
+      btn.onclick = () => { state.newMcServerType = t; scheduleRender(); };
+      stGrid.appendChild(btn);
     });
     stGroup.appendChild(stGrid);
     modal.appendChild(stGroup);
@@ -349,15 +376,20 @@ function renderModal() {
     lGroup.appendChild(el("label", { className: "form-label" }, "Language"));
     const lgrid = el("div", { className: "lang-grid" });
     BOT_LANGS.forEach(lang => {
-      lgrid.appendChild(el("button", { className: "lang-btn" + (lang === state.newLang ? " active" : ""), onClick: () => { state.newLang = lang; scheduleRender(); } }, lang));
+      const btn = el("button", { className: "lang-btn" + (lang === state.newLang ? " active" : "") }, lang);
+      btn.onclick = () => { state.newLang = lang; scheduleRender(); };
+      lgrid.appendChild(btn);
     });
     lGroup.appendChild(lgrid);
     modal.appendChild(lGroup);
   }
 
   const actions = el("div", { className: "modal-actions" });
-  actions.appendChild(el("button", { className: "btn-cancel", onClick: () => { state.showNewModal = false; scheduleRender(); } }, "Cancel"));
-  const createBtn = el("button", { className: "btn-create" + (isMc ? " mc" : ""), id: "createBtn", onClick: createProject }, "Create");
+  const cancelBtn = el("button", { className: "btn-cancel" }, "Cancel");
+  cancelBtn.onclick = () => { state.showNewModal = false; scheduleRender(); };
+  actions.appendChild(cancelBtn);
+  const createBtn = el("button", { className: "btn-create" + (isMc ? " mc" : ""), id: "createBtn" }, "Create");
+  createBtn.onclick = createProject;
   createBtn.disabled = !state.newName.trim();
   actions.appendChild(createBtn);
   modal.appendChild(actions);
@@ -383,13 +415,22 @@ function getDefaultCode(p) {
 function createProject() {
   if (!state.newName.trim()) return;
   const id = Date.now();
+  const rawIp = state.newMcIp || state.newName.toLowerCase().replace(/\s+/g, "-") + ".rebootcord.io";
   const p = {
-    id, name: state.newName.trim(), type: state.newType,
-    lang: state.newLang, version: state.newMcVersion,
+    id: id,
+    name: state.newName.trim(),
+    type: state.newType,
+    lang: state.newLang,
+    version: state.newMcVersion,
     serverType: state.newMcServerType,
-    ip: state.newMcIp || (state.newName.toLowerCase().replace(/\s+/g, "-") + ".rebootcord.io"),
-    running: false, files: {}, serverAbout: "", serverAboutFont: "",
-    _mcFiles: [], _mcMods: [], _mcBackups: [],
+    ip: rawIp,
+    running: false,
+    files: {},
+    serverAbout: "",
+    serverAboutFont: "",
+    _mcFiles: [],
+    _mcMods: [],
+    _mcBackups: [],
   };
   if (p.type === "discord") {
     const fname = getDefaultFilename(p);
@@ -397,14 +438,21 @@ function createProject() {
   }
   state.projects.push(p);
   state.currentProject = p;
-  state.newName = ""; state.newMcIp = ""; state.newMcServerType = "Vanilla";
-  state.mcView = "overview"; state.mcFiles = []; state.mcMods = []; state.mcBackups = [];
-  state.botLogs = []; state.mcLogs = [];
+  state.newName = "";
+  state.newMcIp = "";
+  state.newMcServerType = "Vanilla";
+  state.mcView = "overview";
+  state.mcFiles = [];
+  state.mcMods = [];
+  state.mcBackups = [];
+  state.botLogs = [];
+  state.mcLogs = [];
   if (p.type === "discord") {
     state.editorFile = getDefaultFilename(p);
     state.codeContent = p.files[state.editorFile];
   } else {
-    state.editorFile = ""; state.codeContent = "";
+    state.editorFile = "";
+    state.codeContent = "";
   }
   state.loading = true;
   saveProjects();
@@ -420,17 +468,18 @@ function openProject(id) {
   state.mcFiles = p._mcFiles || [];
   state.mcMods = p._mcMods || [];
   state.mcBackups = p._mcBackups || [];
-  state.botLogs = []; state.mcLogs = [];
+  state.botLogs = [];
+  state.mcLogs = [];
   if (p.type === "discord") {
     state.editorFile = getDefaultFilename(p);
     state.codeContent = (p.files && p.files[state.editorFile]) || "";
+    render();
   } else {
     fetch('/api/projects/' + id + '/dir').then(r => r.json()).then(d => {
       if (d.success) state.mcFiles = d.files;
       render();
     });
   }
-  render();
 }
 
 function deleteProject(id) {
@@ -444,16 +493,15 @@ function toggleRunning(p) {
   p.running = !p.running;
   const proj = state.projects.find(x => x.id === p.id);
   if (proj) proj.running = p.running;
-  
   if (p.running) {
-    fetch(`/api/projects/${p.id}/start`, { method: "POST" }).then(() => render());
+    fetch('/api/projects/' + p.id + '/start', { method: "POST" }).then(() => render());
   } else {
-    fetch(`/api/projects/${p.id}/stop`, { method: "POST" }).then(() => render());
+    fetch('/api/projects/' + p.id + '/stop', { method: "POST" }).then(() => render());
   }
   render();
 }
 
-function flashSaveBtn(btn, orig) {
+function flashSaveBtn(btn) {
   btn.textContent = "Saved!";
   btn.style.color = "var(--green)";
   setTimeout(() => { btn.textContent = "Save"; btn.style.color = ""; }, 1400);
@@ -472,7 +520,8 @@ function renderBotDashboard() {
   const frag = document.createDocumentFragment();
 
   const dnav = el("nav", { className: "dash-nav discord-nav" });
-  const backBtn = el("button", { className: "btn-back", onClick: () => { state.page = "projects"; render(); } });
+  const backBtn = el("button", { className: "btn-back" });
+  backBtn.onclick = () => { state.page = "projects"; render(); };
   backBtn.appendChild(svgIcon("back"));
   backBtn.appendChild(document.createTextNode(" Back"));
   dnav.appendChild(backBtn);
@@ -490,7 +539,8 @@ function renderBotDashboard() {
   chip.appendChild(el("div", { className: "status-dot" + (p.running ? " discord" : " stopped") }));
   chip.appendChild(document.createTextNode(p.running ? " Running" : " Stopped"));
   dtags.appendChild(chip);
-  const toggleBtn = el("button", { className: p.running ? "btn-stop-discord" : "btn-start-discord", onClick: () => toggleRunning(p) });
+  const toggleBtn = el("button", { className: p.running ? "btn-stop-discord" : "btn-start-discord" });
+  toggleBtn.onclick = () => toggleRunning(p);
   toggleBtn.appendChild(svgIcon(p.running ? "stop" : "play"));
   toggleBtn.appendChild(document.createTextNode(p.running ? " Stop" : " Start"));
   dtags.appendChild(toggleBtn);
@@ -515,21 +565,23 @@ function renderBotDashboard() {
 
   projectFiles.forEach(fname => {
     const isActive = state.editorFile === fname || (!state.editorFile && fname === mainFile);
-    const row = el("div", { className: "sidebar-file discord-file" + (isActive ? " active" : ""), onClick: () => switchFile(fname) });
+    const row = el("div", { className: "sidebar-file discord-file" + (isActive ? " active" : "") });
+    row.onclick = () => switchFile(fname);
     row.appendChild(svgIcon("doc"));
     row.appendChild(document.createTextNode(" " + fname));
     if (fname === mainFile) row.appendChild(el("span", { className: "file-badge discord-badge" }, "main"));
     filesSection.appendChild(row);
   });
 
-  const addFileBtn = el("button", { className: "btn-add-file-small", onClick: () => {
-    const name = prompt("New file name (e.g. utils.py):");
+  const addFileBtn = el("button", { className: "btn-add-file-small" });
+  addFileBtn.onclick = () => {
+    const name = prompt("New file name:");
     if (name && name.trim()) {
       state.currentProject.files = state.currentProject.files || {};
       state.currentProject.files[name.trim()] = "";
       switchFile(name.trim());
     }
-  }});
+  };
   addFileBtn.appendChild(svgIcon("plus"));
   addFileBtn.appendChild(document.createTextNode(" New File"));
   filesSection.appendChild(addFileBtn);
@@ -543,7 +595,8 @@ function renderBotDashboard() {
   const pkgInput = el("input", { className: "pkg-input discord-input", id: "pkgInput", placeholder: "package name" });
   pkgInput.onkeydown = (ev) => { if (ev.key === "Enter") installPkg(); };
   pkgSection.appendChild(pkgInput);
-  const installBtn = el("button", { className: "btn-install discord-btn", onClick: installPkg });
+  const installBtn = el("button", { className: "btn-install discord-btn" });
+  installBtn.onclick = installPkg;
   installBtn.appendChild(svgIcon("download"));
   installBtn.appendChild(document.createTextNode(" Install"));
   pkgSection.appendChild(installBtn);
@@ -561,7 +614,7 @@ function renderBotDashboard() {
   const tInput = el("input", { className: "settings-input discord-input", type: "password", id: "tokenInput", placeholder: "Paste your bot token", value: p.botToken || "" });
   const tSaveBtn = el("button", { className: "btn-save discord-btn-sm" });
   tSaveBtn.appendChild(svgIcon("save"));
-  tSaveBtn.addEventListener("click", () => {
+  tSaveBtn.onclick = () => {
     const v = document.getElementById("tokenInput").value.trim();
     if (!v) return;
     p.botToken = v;
@@ -570,7 +623,7 @@ function renderBotDashboard() {
     saveProjects();
     tSaveBtn.textContent = "Saved!";
     setTimeout(() => { tSaveBtn.innerHTML = ""; tSaveBtn.appendChild(svgIcon("save")); }, 1400);
-  });
+  };
   tRow.appendChild(tInput);
   tRow.appendChild(tSaveBtn);
   tokenField.appendChild(tRow);
@@ -584,10 +637,10 @@ function renderBotDashboard() {
   const saveFileBtn = el("button", { className: "btn-save-file discord-btn-sm" });
   saveFileBtn.appendChild(svgIcon("save"));
   saveFileBtn.appendChild(document.createTextNode(" Save"));
-  saveFileBtn.addEventListener("click", () => {
+  saveFileBtn.onclick = () => {
     saveCurrentFile();
     flashSaveBtn(saveFileBtn);
-  });
+  };
   toolbar.appendChild(saveFileBtn);
   main.appendChild(toolbar);
 
@@ -608,7 +661,9 @@ function buildConsole() {
   const toolbar = el("div", { className: "console-toolbar discord-console-toolbar" });
   toolbar.appendChild(el("span", { className: "console-label" }, "Console"));
   const controls = el("div", { className: "console-controls" });
-  controls.appendChild(el("button", { className: "btn-clear", onClick: () => { state.botLogs = []; render(); } }, "Clear"));
+  const clearBtn = el("button", { className: "btn-clear" }, "Clear");
+  clearBtn.onclick = () => { state.botLogs = []; render(); };
+  controls.appendChild(clearBtn);
   toolbar.appendChild(controls);
   panel.appendChild(toolbar);
   const body = el("div", { className: "console-body" });
@@ -630,7 +685,8 @@ function renderMcDashboard() {
   const frag = document.createDocumentFragment();
 
   const dnav = el("nav", { className: "dash-nav", style: { borderBottomColor:"#162016" } });
-  const backBtn = el("button", { className: "btn-back", onClick: () => { state.page = "projects"; render(); } });
+  const backBtn = el("button", { className: "btn-back" });
+  backBtn.onclick = () => { state.page = "projects"; render(); };
   backBtn.appendChild(svgIcon("back"));
   backBtn.appendChild(document.createTextNode(" Back"));
   dnav.appendChild(backBtn);
@@ -638,10 +694,11 @@ function renderMcDashboard() {
 
   const dtags = el("div", { className: "dash-tags" });
   const chip = el("div", { className: "status-chip" + (p.running ? "" : " stopped") });
-  chip.appendChild(el("div", { className: "status-dot" + (p.running ? "" : " stopped") });
+  chip.appendChild(el("div", { className: "status-dot" + (p.running ? "" : " stopped") }));
   chip.appendChild(document.createTextNode(p.running ? " Running" : " Stopped"));
   dtags.appendChild(chip);
-  const toggleBtn = el("button", { className: p.running ? "btn-stop" : "btn-start", onClick: () => toggleRunning(p) });
+  const toggleBtn = el("button", { className: p.running ? "btn-stop" : "btn-start" });
+  toggleBtn.onclick = () => toggleRunning(p);
   toggleBtn.appendChild(svgIcon(p.running ? "stop" : "play"));
   toggleBtn.appendChild(document.createTextNode(p.running ? " Stop" : " Start"));
   dtags.appendChild(toggleBtn);
@@ -653,7 +710,7 @@ function renderMcDashboard() {
 
   const hdr = el("div", { className: "mc-header-section" });
   hdr.appendChild(el("div", { className: "mc-server-name" }, p.name || "Minecraft Server"));
-  hdr.appendChild(el("div", { className: "mc-server-ip" }, (p.ip || "play.server.net") + (p.port ? `:${p.port}` : '')));
+  hdr.appendChild(el("div", { className: "mc-server-ip" }, (p.ip || "play.server.net") + (p.port ? ":" + p.port : "")));
   const vtag = el("span", { className: "mc-version-tag" });
   vtag.appendChild(svgIcon("pickaxe"));
   vtag.appendChild(document.createTextNode(" " + (p.serverType || "Vanilla") + " " + (p.version || "1.21.5")));
@@ -661,15 +718,18 @@ function renderMcDashboard() {
   sb.appendChild(hdr);
 
   const navWrap = el("div", { style: { padding:"8px 0" } });
-  [
+  const navItems = [
     { id: "overview",  iconType: "chart",    label: "Overview"       },
     { id: "files",     iconType: "folder",   label: "Files"          },
     { id: "mods",      iconType: "plug",     label: "Mods / Plugins" },
     { id: "console",   iconType: "terminal", label: "Console"        },
     { id: "backups",   iconType: "backup",   label: "Backup Worlds"  },
     { id: "about",     iconType: "info",     label: "Server About"   },
-  ].forEach(item => {
-    const btn = el("button", { className: "mc-nav-btn" + (state.mcView === item.id ? " active" : ""), onClick: () => { state.mcView = item.id; scheduleRender(); } });
+  ];
+  navItems.forEach(item => {
+    const btnClass = "mc-nav-btn" + (state.mcView === item.id ? " active" : "");
+    const btn = el("button", { className: btnClass });
+    btn.onclick = () => { state.mcView = item.id; scheduleRender(); };
     btn.appendChild(svgIcon(item.iconType));
     btn.appendChild(document.createTextNode(" " + item.label));
     navWrap.appendChild(btn);
@@ -679,10 +739,11 @@ function renderMcDashboard() {
   const qa = el("div", { style: { padding:"14px", marginTop:"auto", borderTop:"1px solid #162016" } });
   qa.appendChild(el("div", { style: { fontSize:"10px", color:"var(--text-muted)", marginBottom:"8px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".08em" } }, "Quick Actions"));
 
-  const backupQuickBtn = el("button", { className: "mc-quick-btn secondary", onClick: () => {
+  const backupQuickBtn = el("button", { className: "mc-quick-btn secondary" });
+  backupQuickBtn.onclick = () => {
     if(!state.currentProject) return;
     fetch('/api/projects/' + state.currentProject.id + '/backup', { method: 'POST' }).then(()=>render());
-  }});
+  };
   backupQuickBtn.appendChild(svgIcon("backup"));
   backupQuickBtn.appendChild(document.createTextNode(" Backup World"));
   qa.appendChild(backupQuickBtn);
@@ -729,11 +790,18 @@ function buildMcOverview(container, p) {
   container.appendChild(grid);
   container.appendChild(el("div", { className: "mc-section-title" }, "Server IP"));
   const ipRow = el("div", { style: { background:"#090f09", border:"1px solid #162016", borderRadius:"8px", padding:"14px", marginBottom:"20px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:"8px" } });
-  const combinedIp = (p.ip || "play.myserver.net") + (p.port ? `:${p.port}` : "");
+  const combinedIp = (p.ip || "play.myserver.net") + (p.port ? ":" + p.port : "");
   const ipText = el("span", { style: { fontFamily:"var(--mono)", color:"var(--mc-bright)", fontSize:"15px", fontWeight:"600" } }, combinedIp);
-  const copyBtn = el("button", { style: { background:"#1c381c", color:"var(--mc-bright)", border:"1px solid #2a5a2a", padding:"6px 13px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => { if (navigator.clipboard) navigator.clipboard.writeText(combinedIp); copyBtn.lastChild.textContent = "Copied!"; setTimeout(() => { copyBtn.lastChild.textContent = "Copy IP"; }, 1400); } });
+  
+  const copyBtn = el("button", { style: { background:"#1c381c", color:"var(--mc-bright)", border:"1px solid #2a5a2a", padding:"6px 13px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", fontFamily:"var(--font)" } });
+  copyBtn.onclick = () => {
+    if (navigator.clipboard) navigator.clipboard.writeText(combinedIp);
+    copyBtn.lastChild.textContent = "Copied!";
+    setTimeout(() => { copyBtn.lastChild.textContent = "Copy IP"; }, 1400);
+  };
   copyBtn.appendChild(svgIcon("copy"));
   copyBtn.appendChild(document.createTextNode("Copy IP"));
+  
   ipRow.appendChild(ipText);
   ipRow.appendChild(copyBtn);
   container.appendChild(ipRow);
@@ -742,7 +810,8 @@ function buildMcOverview(container, p) {
 function buildMcFiles(container, p) {
   const topRow = el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"12px", flexWrap:"wrap", gap:"8px" } });
   topRow.appendChild(el("div", { className: "mc-section-title", style: { marginBottom:"0" } }, "Server Files"));
-  const upBtn = el("button", { className: "btn-upload-mod", onClick: () => {
+  const upBtn = el("button", { className: "btn-upload-mod" });
+  upBtn.onclick = () => {
     const input = document.createElement("input");
     input.type = "file";
     input.onchange = (e) => {
@@ -758,17 +827,18 @@ function buildMcFiles(container, p) {
       });
     };
     input.click();
-  }});
+  };
   upBtn.appendChild(svgIcon("upload"));
   upBtn.appendChild(document.createTextNode(" Upload File"));
   topRow.appendChild(upBtn);
   container.appendChild(topRow);
 
   const list = el("div", { className: "files-list" });
-  if (!state.mcFiles || state.mcFiles.length === 0) {
+  const filesArr = state.mcFiles || [];
+  if (filesArr.length === 0) {
     list.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"14px" } }, "No files yet."));
   }
-  (state.mcFiles || []).forEach((f) => {
+  filesArr.forEach((f) => {
     const item = el("div", { className: "file-item" });
     const icEl = svgIcon(f.isDir ? "folder" : "doc");
     icEl.style.cssText = "color:var(--mc-bright)";
@@ -776,7 +846,8 @@ function buildMcFiles(container, p) {
     item.appendChild(el("span", { className: "file-item-name" }, f.name));
     item.appendChild(el("span", { className: "file-item-size" }, f.size + " B"));
     const actions = el("div", { className: "file-item-actions" });
-    const delBtn = el("button", { className: "btn-file-action danger", onClick: () => {
+    const delBtn = el("button", { className: "btn-file-action danger" });
+    delBtn.onclick = () => {
       if (confirm("Delete " + f.name + "?")) {
         fetch('/api/projects/' + p.id + '/deleteFile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: f.name}) }).then(() => {
           fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => {
@@ -785,7 +856,7 @@ function buildMcFiles(container, p) {
           });
         });
       }
-    }});
+    };
     delBtn.appendChild(svgIcon("trash"));
     actions.appendChild(delBtn);
     item.appendChild(actions);
@@ -793,7 +864,8 @@ function buildMcFiles(container, p) {
   });
   container.appendChild(list);
 
-  const addBtn = el("button", { className: "btn-add-file", onClick: () => {
+  const addBtn = el("button", { className: "btn-add-file" });
+  addBtn.onclick = () => {
     const name = prompt("File name:");
     if (name && name.trim()) {
       fetch('/api/projects/' + p.id + '/touch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: name.trim()}) }).then(() => {
@@ -803,7 +875,7 @@ function buildMcFiles(container, p) {
         });
       });
     }
-  }});
+  };
   addBtn.appendChild(svgIcon("plus"));
   addBtn.appendChild(document.createTextNode(" New File"));
   container.appendChild(addBtn);
@@ -827,7 +899,9 @@ function buildMcConsole(p) {
   chip.appendChild(el("div", { className: "status-dot" + (p.running ? "" : " stopped") });
   chip.appendChild(document.createTextNode(p.running ? " Running" : " Stopped"));
   rightTools.appendChild(chip);
-  rightTools.appendChild(el("button", { className: "btn-clear", onClick: () => { state.mcLogs = []; render(); } }, "Clear"));
+  const clearBtn = el("button", { className: "btn-clear" }, "Clear");
+  clearBtn.onclick = () => { state.mcLogs = []; render(); };
+  rightTools.appendChild(clearBtn);
   toolbar.appendChild(rightTools);
   wrap.appendChild(toolbar);
   const body = el("div", { className: "mc-console-body", style: { flex:"1" } });
@@ -846,25 +920,28 @@ function buildMcConsole(p) {
   cmdInput.oninput = () => { state.mcCmd = cmdInput.value; };
   cmdInput.onkeydown = (ev) => { if (ev.key === "Enter") sendMcCmd(cmdInput.value); };
   inputRow.appendChild(cmdInput);
-  inputRow.appendChild(el("button", { className: "btn-send-cmd", onClick: () => sendMcCmd(cmdInput.value) }, "Send"));
+  const sendBtn = el("button", { className: "btn-send-cmd" }, "Send");
+  sendBtn.onclick = () => sendMcCmd(cmdInput.value);
+  inputRow.appendChild(sendBtn);
   wrap.appendChild(inputRow);
   return wrap;
 }
 
 function sendMcCmd(cmd) {
-  cmd = (cmd || "").trim();
-  if (!cmd || !ws || !state.currentProject) return;
-  ws.send(JSON.stringify({ event: 'cmd', projectId: state.currentProject.id, cmd }));
+  const safeCmd = (cmd || "").trim();
+  if (!safeCmd || !ws || !state.currentProject) return;
+  ws.send(JSON.stringify({ event: 'cmd', projectId: state.currentProject.id, cmd: safeCmd }));
   state.mcCmd = "";
   render();
 }
 
 function buildMcBackups(container, p) {
   container.appendChild(el("div", { className: "mc-section-title" }, "Backup Worlds"));
-  const createBtn = el("button", { className: "btn-upload-mod", style: { marginBottom:"16px" }, onClick: () => {
+  const createBtn = el("button", { className: "btn-upload-mod", style: { marginBottom:"16px" } });
+  createBtn.onclick = () => {
     if(!state.currentProject) return;
     fetch('/api/projects/' + state.currentProject.id + '/backup', { method: 'POST' }).then(()=>render());
-  }});
+  };
   createBtn.appendChild(svgIcon("backup"));
   createBtn.appendChild(document.createTextNode(" Create Backup Now"));
   container.appendChild(createBtn);
@@ -885,10 +962,11 @@ function buildMcBackups(container, p) {
     left.appendChild(info);
     row.appendChild(left);
 
-    const revertBtn = el("button", { className: "btn-revert", onClick: () => {
+    const revertBtn = el("button", { className: "btn-revert" });
+    revertBtn.onclick = () => {
       if (!confirm("Revert to this backup? The server will restart.")) return;
       fetch('/api/projects/' + p.id + '/revert', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({dir: b.dir}) }).then(()=>render());
-    }});
+    };
     revertBtn.appendChild(svgIcon("revert"));
     revertBtn.appendChild(document.createTextNode(" Revert to this backup"));
     row.appendChild(revertBtn);
@@ -902,34 +980,43 @@ function buildMcAbout(container, p) {
   const fontRow = el("div", { style: { display:"flex", gap:"8px", flexWrap:"wrap", marginBottom:"12px", alignItems:"center" } });
   fontRow.appendChild(el("span", { style: { fontSize:"11px", color:"var(--text-muted)", fontWeight:"700", textTransform:"uppercase", letterSpacing:".06em" } }, "Font:"));
   FONTS.forEach(f => {
-    const btn = el("button", { className: "font-btn" + ((p.serverAboutFont || "") === f.value ? " active" : ""), style: { fontFamily: f.value || "inherit" }, onClick: () => {
+    const btnClass = "font-btn" + ((p.serverAboutFont || "") === f.value ? " active" : "");
+    const btn = el("button", { className: btnClass, style: { fontFamily: f.value || "inherit" } }, f.label);
+    btn.onclick = () => {
       p.serverAboutFont = f.value;
       saveProjects();
       scheduleRender();
-    }}, f.label);
+    };
     fontRow.appendChild(btn);
   });
   container.appendChild(fontRow);
 
   const ta = el("textarea", { className: "about-editor", placeholder: "Write your server description here...", style: { fontFamily: p.serverAboutFont || "inherit" } });
   ta.value = p.serverAbout || "";
-  ta.oninput = () => { p.serverAbout = ta.value; preview.style.fontFamily = p.serverAboutFont || "inherit"; preview.textContent = ta.value || "Your description will appear here..."; };
+  
+  const preview = el("div", { className: "about-preview", style: { fontFamily: p.serverAboutFont || "inherit" } });
+  preview.textContent = p.serverAbout || "Your description will appear here...";
+  if (!p.serverAbout) preview.style.color = "var(--text-muted)";
+
+  ta.oninput = () => { 
+    p.serverAbout = ta.value; 
+    preview.style.fontFamily = p.serverAboutFont || "inherit"; 
+    preview.textContent = ta.value || "Your description will appear here..."; 
+  };
   container.appendChild(ta);
 
-  const saveBtn = el("button", { className: "btn-upload-mod", style: { marginTop:"10px", marginBottom:"16px" }, onClick: () => {
+  const saveBtn = el("button", { className: "btn-upload-mod", style: { marginTop:"10px", marginBottom:"16px" } });
+  saveBtn.onclick = () => {
     p.serverAbout = ta.value;
     saveProjects();
     saveBtn.textContent = "Saved!";
     setTimeout(() => { saveBtn.innerHTML = ""; saveBtn.appendChild(svgIcon("save")); saveBtn.appendChild(document.createTextNode(" Save Description")); }, 1400);
-  }});
+  };
   saveBtn.appendChild(svgIcon("save"));
   saveBtn.appendChild(document.createTextNode(" Save Description"));
   container.appendChild(saveBtn);
 
   container.appendChild(el("div", { className: "mc-section-title" }, "Preview"));
-  const preview = el("div", { className: "about-preview", style: { fontFamily: p.serverAboutFont || "inherit" } });
-  preview.textContent = p.serverAbout || "Your description will appear here...";
-  if (!p.serverAbout) preview.style.color = "var(--text-muted)";
   container.appendChild(preview);
 }
 
