@@ -20,20 +20,104 @@ const MC_VERSIONS = [
   "1.3.2","1.3.1",
   "1.2.5","1.2.4","1.2.3","1.2.2","1.2.1",
   "1.1","1.0",
-  "Beta 1.9","Beta 1.8.1","Beta 1.7.3","Beta 1.6.6","Beta 1.5_01","Beta 1.4_01","Beta 1.3_01","Beta 1.2_02","Beta 1.1_02","Beta 1.0",
-  "Alpha 1.2.6","Alpha 1.1.2_01","Alpha 1.0.17_04",
-  "Infdev 20100630","Indev 0.31",
-  "Snapshot 25w19a","Snapshot 25w14a","Snapshot 25w03a","Snapshot 24w50a","Snapshot 24w46a","Snapshot 24w40a","Snapshot 24w33a","Snapshot 24w21b","Snapshot 24w14a","Snapshot 23w51b","Snapshot 23w45a","Snapshot 23w31a","Snapshot 23w14a","Snapshot 22w45a","Snapshot 22w13a","Snapshot 21w44a","Snapshot 21w37a","Snapshot 20w51a","Snapshot 20w45a",
-  "Paper 1.21.4","Paper 1.21.3","Paper 1.21.1","Paper 1.21","Paper 1.20.6","Paper 1.20.4","Paper 1.20.2","Paper 1.20.1","Paper 1.20","Paper 1.19.4","Paper 1.19.2","Paper 1.19","Paper 1.18.2","Paper 1.18.1","Paper 1.17.1","Paper 1.16.5","Paper 1.15.2","Paper 1.14.4","Paper 1.13.2","Paper 1.12.2","Paper 1.8.8",
-  "Forge 1.21.1","Forge 1.20.4","Forge 1.20.2","Forge 1.20.1","Forge 1.19.4","Forge 1.19.2","Forge 1.18.2","Forge 1.17.1","Forge 1.16.5","Forge 1.15.2","Forge 1.14.4","Forge 1.12.2","Forge 1.10.2","Forge 1.8.9","Forge 1.7.10",
-  "Fabric 1.21.4","Fabric 1.21.3","Fabric 1.21.1","Fabric 1.21","Fabric 1.20.6","Fabric 1.20.4","Fabric 1.20.2","Fabric 1.20.1","Fabric 1.19.4","Fabric 1.19.2","Fabric 1.18.2","Fabric 1.17.1","Fabric 1.16.5",
-  "Spigot 1.21.4","Spigot 1.21.3","Spigot 1.21.1","Spigot 1.20.4","Spigot 1.20.2","Spigot 1.20.1","Spigot 1.19.4","Spigot 1.19.2","Spigot 1.18.2","Spigot 1.17.1","Spigot 1.16.5","Spigot 1.15.2","Spigot 1.14.4","Spigot 1.12.2","Spigot 1.8.8",
-  "Purpur 1.21.4","Purpur 1.21.1","Purpur 1.20.4","Purpur 1.20.1","Purpur 1.19.4","Purpur 1.18.2","Purpur 1.17.1","Purpur 1.16.5",
-  "Folia 1.21.1","Folia 1.20.4","Folia 1.20.2","Folia 1.20.1","Folia 1.19.4",
-  "Mohist 1.20.1","Mohist 1.19.4","Mohist 1.18.2","Mohist 1.16.5","Mohist 1.12.2",
+  "Beta 1.9-pre6","Beta 1.9-pre5","Beta 1.9-pre4","Beta 1.9-pre3","Beta 1.9-pre2","Beta 1.9-pre1",
+  "Beta 1.9","Beta 1.8.1","Beta 1.8","Beta 1.7.3","Beta 1.7.2","Beta 1.7",
+  "Beta 1.6.6","Beta 1.6.5","Beta 1.6.4","Beta 1.6.3","Beta 1.6.2","Beta 1.6.1","Beta 1.6",
+  "Beta 1.5_01","Beta 1.5","Beta 1.4_01","Beta 1.4","Beta 1.3_01","Beta 1.3",
+  "Beta 1.2_02","Beta 1.2_01","Beta 1.2","Beta 1.1_02","Beta 1.1_01","Beta 1.1",
+  "Beta 1.0_01","Beta 1.0",
+  "Alpha 1.2.6","Alpha 1.2.5","Alpha 1.2.4_01","Alpha 1.2.4","Alpha 1.2.3_04","Alpha 1.2.3",
+  "Alpha 1.2.2b","Alpha 1.2.2","Alpha 1.2.1_01","Alpha 1.2.1","Alpha 1.2.0",
+  "Alpha 1.1.2_01","Alpha 1.1.2","Alpha 1.1.1","Alpha 1.1.0",
+  "Alpha 1.0.17_04","Alpha 1.0.17_02","Alpha 1.0.17","Alpha 1.0.16",
+  "Alpha 1.0.15","Alpha 1.0.14","Alpha 1.0.13_01","Alpha 1.0.13","Alpha 1.0.11",
+  "Infdev 20100630","Infdev 20100629","Infdev 20100628","Infdev 20100625","Infdev 20100624",
+  "Infdev 20100622","Infdev 20100617","Infdev 20100616","Infdev 20100615","Infdev 20100614",
+  "Infdev 20100607","Infdev 20100608","Infdev 20100227","Infdev 20100225","Infdev 20100218",
+  "Infdev 20100213","Infdev 20100212","Infdev 20100206-2","Infdev 20100206",
+  "Indev 0.31 20100205","Indev 0.31 20100204","Indev 0.31 20100130","Indev 0.31 20100129",
+  "Indev 0.31 20100128","Indev 0.31 20100124","Indev 0.31 20100122","Indev 0.31 20100114",
+  "Indev 0.31 20100111","Indev 0.31","Indev 0.30",
+  "Classic 0.30","Classic 0.29","Classic 0.28","Classic 0.0.23a","Classic 0.0.22a",
+  "Snapshot 25w20a","Snapshot 25w19a","Snapshot 25w18a","Snapshot 25w17a","Snapshot 25w16a",
+  "Snapshot 25w15a","Snapshot 25w14a","Snapshot 25w12a","Snapshot 25w10a","Snapshot 25w09b",
+  "Snapshot 25w09a","Snapshot 25w07a","Snapshot 25w06a","Snapshot 25w05a","Snapshot 25w04b",
+  "Snapshot 25w04a","Snapshot 25w03a","Snapshot 25w02a",
+  "Snapshot 24w50a","Snapshot 24w46a","Snapshot 24w45a","Snapshot 24w44a","Snapshot 24w40a",
+  "Snapshot 24w38a","Snapshot 24w36a","Snapshot 24w35b","Snapshot 24w34a","Snapshot 24w33a",
+  "Snapshot 24w21b","Snapshot 24w21a","Snapshot 24w20a","Snapshot 24w19b","Snapshot 24w18a",
+  "Snapshot 24w14a","Snapshot 24w13a","Snapshot 24w12a","Snapshot 24w11a","Snapshot 24w10a",
+  "Snapshot 24w09a","Snapshot 24w07a","Snapshot 24w06a","Snapshot 24w05b","Snapshot 24w04b",
+  "Snapshot 24w03b","Snapshot 24w02a",
+  "Snapshot 23w51b","Snapshot 23w51a","Snapshot 23w46a","Snapshot 23w45a","Snapshot 23w44a",
+  "Snapshot 23w43b","Snapshot 23w43a","Snapshot 23w42a","Snapshot 23w41a","Snapshot 23w40a",
+  "Snapshot 23w35a","Snapshot 23w31a","Snapshot 23w18a","Snapshot 23w17a","Snapshot 23w16a",
+  "Snapshot 23w14a","Snapshot 23w12a","Snapshot 23w07a","Snapshot 23w06a","Snapshot 23w04a","Snapshot 23w03a",
+  "Snapshot 22w45a","Snapshot 22w44a","Snapshot 22w43a","Snapshot 22w42a","Snapshot 22w24a",
+  "Snapshot 22w19a","Snapshot 22w18a","Snapshot 22w17a","Snapshot 22w16b","Snapshot 22w15a",
+  "Snapshot 22w14a","Snapshot 22w13a","Snapshot 22w12a","Snapshot 22w11a","Snapshot 22w07a",
+  "Snapshot 22w06a","Snapshot 22w05a","Snapshot 22w03a",
+  "Snapshot 21w44a","Snapshot 21w43a","Snapshot 21w42a","Snapshot 21w41a","Snapshot 21w40a",
+  "Snapshot 21w39a","Snapshot 21w38a","Snapshot 21w37a","Snapshot 21w20a","Snapshot 21w19a",
+  "Snapshot 21w18a","Snapshot 21w17a","Snapshot 21w16a","Snapshot 21w15a","Snapshot 21w14a",
+  "Snapshot 21w13a","Snapshot 21w11a","Snapshot 21w10a","Snapshot 21w08b","Snapshot 21w07a",
+  "Snapshot 21w06a","Snapshot 21w05b","Snapshot 21w03a",
+  "Snapshot 20w51a","Snapshot 20w49a","Snapshot 20w48a","Snapshot 20w46a","Snapshot 20w45a",
+  "Paper 1.21.5","Paper 1.21.4","Paper 1.21.3","Paper 1.21.2","Paper 1.21.1","Paper 1.21",
+  "Paper 1.20.6","Paper 1.20.5","Paper 1.20.4","Paper 1.20.3","Paper 1.20.2","Paper 1.20.1","Paper 1.20",
+  "Paper 1.19.4","Paper 1.19.3","Paper 1.19.2","Paper 1.19.1","Paper 1.19",
+  "Paper 1.18.2","Paper 1.18.1","Paper 1.18","Paper 1.17.1","Paper 1.17",
+  "Paper 1.16.5","Paper 1.16.4","Paper 1.16.3","Paper 1.16.2","Paper 1.16.1","Paper 1.16",
+  "Paper 1.15.2","Paper 1.15.1","Paper 1.15","Paper 1.14.4","Paper 1.14.3","Paper 1.14.2","Paper 1.14",
+  "Paper 1.13.2","Paper 1.13.1","Paper 1.13","Paper 1.12.2","Paper 1.12.1","Paper 1.12",
+  "Paper 1.11.2","Paper 1.11","Paper 1.10.2","Paper 1.9.4","Paper 1.9","Paper 1.8.9","Paper 1.8.8",
+  "Forge 1.21.1","Forge 1.21","Forge 1.20.6","Forge 1.20.4","Forge 1.20.2","Forge 1.20.1","Forge 1.20",
+  "Forge 1.19.4","Forge 1.19.3","Forge 1.19.2","Forge 1.19","Forge 1.18.2","Forge 1.18.1","Forge 1.18",
+  "Forge 1.17.1","Forge 1.16.5","Forge 1.16.4","Forge 1.16.3","Forge 1.16.2","Forge 1.16.1",
+  "Forge 1.15.2","Forge 1.15","Forge 1.14.4","Forge 1.14.3","Forge 1.14.2","Forge 1.14",
+  "Forge 1.13.2","Forge 1.12.2","Forge 1.12.1","Forge 1.12","Forge 1.11.2","Forge 1.11",
+  "Forge 1.10.2","Forge 1.10","Forge 1.9.4","Forge 1.9","Forge 1.8.9","Forge 1.8",
+  "Forge 1.7.10","Forge 1.7.2","Forge 1.6.4","Forge 1.6.2","Forge 1.5.2","Forge 1.5.1",
+  "Forge 1.4.7","Forge 1.4.6","Forge 1.4.5","Forge 1.4.2","Forge 1.3.2","Forge 1.2.5",
+  "NeoForge 21.5","NeoForge 21.4","NeoForge 21.3","NeoForge 21.1","NeoForge 21.0",
+  "NeoForge 20.6","NeoForge 20.4","NeoForge 20.3","NeoForge 20.2","NeoForge 20.1",
+  "Fabric 1.21.5","Fabric 1.21.4","Fabric 1.21.3","Fabric 1.21.2","Fabric 1.21.1","Fabric 1.21",
+  "Fabric 1.20.6","Fabric 1.20.5","Fabric 1.20.4","Fabric 1.20.3","Fabric 1.20.2","Fabric 1.20.1","Fabric 1.20",
+  "Fabric 1.19.4","Fabric 1.19.3","Fabric 1.19.2","Fabric 1.19.1","Fabric 1.19",
+  "Fabric 1.18.2","Fabric 1.18.1","Fabric 1.17.1","Fabric 1.16.5","Fabric 1.16.4","Fabric 1.16.3",
+  "Fabric 1.16.2","Fabric 1.16.1","Fabric 1.15.2","Fabric 1.14.4",
+  "Quilt 1.21.1","Quilt 1.20.6","Quilt 1.20.4","Quilt 1.20.2","Quilt 1.20.1","Quilt 1.20",
+  "Quilt 1.19.4","Quilt 1.19.2","Quilt 1.18.2",
+  "Spigot 1.21.4","Spigot 1.21.3","Spigot 1.21.2","Spigot 1.21.1","Spigot 1.21",
+  "Spigot 1.20.6","Spigot 1.20.5","Spigot 1.20.4","Spigot 1.20.3","Spigot 1.20.2","Spigot 1.20.1","Spigot 1.20",
+  "Spigot 1.19.4","Spigot 1.19.3","Spigot 1.19.2","Spigot 1.19.1","Spigot 1.19",
+  "Spigot 1.18.2","Spigot 1.18.1","Spigot 1.17.1","Spigot 1.16.5","Spigot 1.16.4","Spigot 1.16.3",
+  "Spigot 1.15.2","Spigot 1.14.4","Spigot 1.13.2","Spigot 1.12.2","Spigot 1.11.2",
+  "Spigot 1.10.2","Spigot 1.9.4","Spigot 1.8.8",
+  "CraftBukkit 1.21.1","CraftBukkit 1.20.4","CraftBukkit 1.20.1","CraftBukkit 1.19.4",
+  "CraftBukkit 1.18.2","CraftBukkit 1.16.5","CraftBukkit 1.12.2","CraftBukkit 1.8.8",
+  "Purpur 1.21.5","Purpur 1.21.4","Purpur 1.21.3","Purpur 1.21.2","Purpur 1.21.1",
+  "Purpur 1.20.6","Purpur 1.20.4","Purpur 1.20.2","Purpur 1.20.1","Purpur 1.19.4",
+  "Purpur 1.19.3","Purpur 1.19.2","Purpur 1.18.2","Purpur 1.17.1","Purpur 1.16.5","Purpur 1.16.4","Purpur 1.15.2",
+  "Pufferfish 1.21.1","Pufferfish 1.20.4","Pufferfish 1.20.1","Pufferfish 1.19.4","Pufferfish 1.19.2","Pufferfish 1.18.2",
+  "Folia 1.21.5","Folia 1.21.4","Folia 1.21.1","Folia 1.20.6","Folia 1.20.4","Folia 1.20.2","Folia 1.20.1","Folia 1.19.4",
+  "Mohist 1.21.1","Mohist 1.20.4","Mohist 1.20.2","Mohist 1.20.1","Mohist 1.19.4",
+  "Mohist 1.18.2","Mohist 1.16.5","Mohist 1.12.2","Mohist 1.7.10",
+  "CatServer 1.18.2","CatServer 1.16.5","CatServer 1.12.2",
+  "Arclight 1.21.1","Arclight 1.20.4","Arclight 1.20.1","Arclight 1.19.4","Arclight 1.18.2","Arclight 1.16.5","Arclight 1.12.2",
+  "Sponge 1.21.1","Sponge 1.20.6","Sponge 1.20.4","Sponge 1.20.1","Sponge 1.19.4",
+  "Sponge 1.19.2","Sponge 1.18.2","Sponge 1.16.5","Sponge 1.12.2",
   "BungeeCord 1.21","BungeeCord 1.20","BungeeCord 1.19","BungeeCord 1.18",
-  "Velocity 3.3.0","Velocity 3.2.0","Velocity 3.1.2",
-  "Waterfall 1.20","Waterfall 1.19","Waterfall 1.18"
+  "BungeeCord 1.16","BungeeCord 1.15","BungeeCord 1.12","BungeeCord 1.8",
+  "Velocity 3.4.0","Velocity 3.3.0","Velocity 3.2.0","Velocity 3.1.2","Velocity 3.1.1",
+  "Velocity 3.1.0","Velocity 3.0.4","Velocity 3.0.3","Velocity 3.0.2","Velocity 3.0.1","Velocity 3.0.0",
+  "Waterfall 1.20","Waterfall 1.19","Waterfall 1.18","Waterfall 1.17","Waterfall 1.16",
+  "Waterfall 1.15","Waterfall 1.14","Waterfall 1.13","Waterfall 1.12","Waterfall 1.11","Waterfall 1.10",
+  "Travertine 1.9","Travertine 1.8",
+  "Bedrock 1.21.80","Bedrock 1.21.73","Bedrock 1.21.51","Bedrock 1.21.44","Bedrock 1.21.30",
+  "Bedrock 1.21.20","Bedrock 1.21.0","Bedrock 1.20.81","Bedrock 1.20.73","Bedrock 1.20.62",
+  "Bedrock 1.20.50","Bedrock 1.20.40","Bedrock 1.20.30","Bedrock 1.20.0","Bedrock 1.19.80",
+  "GeyserMC 1.21.5","GeyserMC 1.21.4","GeyserMC 1.21.1","GeyserMC 1.20.6","GeyserMC 1.20.4","GeyserMC 1.20.1","GeyserMC 1.19.4"
 ];
 
 const BOT_LANGS = [
@@ -41,122 +125,29 @@ const BOT_LANGS = [
   "Go","Rust","Ruby","C#","PHP","Kotlin","Dart"
 ];
 
-const SAMPLE_BOT_CODE = `import discord
-import aiohttp
-import os
-
-WEBSITE_URL = os.getenv("WEBSITE_URL", "")
-client = discord.Client(intents=discord.Intents.all())
-
-@client.event
-async def on_ready():
-    print(f"Bot online as {client.user}")
-
-@client.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    content = message.content.strip()
-    args = content.split()
-    command = args[0] if args else ""
-    args = args[1:]
-
-    if command == "$ping":
-        await message.reply("Pong!")
-
-    elif command == "$userscheck":
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{WEBSITE_URL}/api/stats") as res:
-                    stats = await res.json()
-            embed = discord.Embed(title="Reboot Cord Statistics", color=0x00ff9d)
-            embed.add_field(name="Active Users", value=str(stats["activeUsers"]), inline=True)
-            embed.add_field(name="Available Invites", value=str(stats["totalInvites"]), inline=True)
-            embed.timestamp = discord.utils.utcnow()
-            await message.reply(embed=embed)
-        except Exception:
-            await message.reply("Could not fetch stats.")
-
-    elif command == "$blacklist":
-        target = None
-        if message.mentions:
-            target = message.mentions[0].name
-        elif args:
-            target = args[0]
-        if not target:
-            await message.reply("Usage: \`$blacklist <code>\` or \`$blacklist @user\`")
-            return
-        async with aiohttp.ClientSession() as session:
-            await session.post(f"{WEBSITE_URL}/api/blacklist", json={"key": target})
-        await message.reply(f"Blacklisted: **{target}**")
-
-client.run("YOUR_BOT_TOKEN_HERE")
-`;
-
-const DEFAULT_BOT_LOGS = [
-  { t: "21:30:33", type: "warn", msg: "[PKG] aiosignal already exists. Specify --upgrade to force replacement." },
-  { t: "21:30:35", type: "warn", msg: "[PKG] multidict already exists. Specify --upgrade to force replacement." },
-  { t: "21:30:35", type: "warn", msg: "[PKG] yarl-1.23.0.dist-info already exists." },
-  { t: "21:30:51", type: "ok",   msg: "[PKGDONE] aiohttp package has been installed into the bot." },
-  { t: "21:30:54", type: "sys",  msg: "[SYS] Bot started" },
-  { t: "21:30:56", type: "info", msg: "[INFO] discord.client: logging in using static token" },
-  { t: "21:30:57", type: "info", msg: "[INFO] discord.gateway: Shard ID None has connected to Gateway." },
-];
-
-const DEFAULT_MC_LOGS = [
-  { t: "00:00:01", type: "server", msg: "[Server thread/INFO]: Starting minecraft server..." },
-  { t: "00:00:02", type: "info",   msg: "[Server thread/INFO]: Loading libraries, please wait..." },
-  { t: "00:00:04", type: "server", msg: "[Server thread/INFO]: Preparing level 'world'" },
-  { t: "00:00:05", type: "info",   msg: "[Server thread/INFO]: Preparing start region for minecraft:overworld" },
-  { t: "00:00:07", type: "server", msg: "[Server thread/INFO]: Done (3.421s)! For help, type 'help'" },
-  { t: "00:00:08", type: "info",   msg: "[Server thread/INFO]: Starting GS4 status listener" },
-  { t: "00:01:12", type: "server", msg: "[Server thread/INFO]: Notch[/10.0.0.1:45234] logged in with entity id 1" },
-];
-
-const DEFAULT_MC_FILES = [
-  { name: "server.jar",        size: "47.2 MB",  type: "jar"   },
-  { name: "server.properties", size: "2.1 KB",   type: "config" },
-  { name: "eula.txt",          size: "0.3 KB",   type: "doc"   },
-  { name: "ops.json",          size: "0.8 KB",   type: "crown" },
-  { name: "whitelist.json",    size: "0.4 KB",   type: "list"  },
-  { name: "world/",            size: "154 MB",   type: "world" },
-  { name: "plugins/",          size: "22 MB",    type: "plug"  },
-];
-
-const DEFAULT_MC_MODS = [
-  { name: "Essentials",  ver: "2.20.1",   active: true  },
-  { name: "WorldEdit",   ver: "7.3.0",    active: true  },
-  { name: "LuckPerms",   ver: "5.4.141",  active: true  },
-  { name: "Vault",       ver: "1.7.3",    active: true  },
-  { name: "DiscordSRV",  ver: "1.27.0",   active: false },
-];
-
 const MAX_LOGS = 500;
 
 const state = {
   page: "projects",
-  projects: [
-    { id: 1, name: "reboot cord",  type: "discord",   lang: "Python",   running: true },
-    { id: 2, name: "my mc server", type: "minecraft", version: "1.21.1", ip: "play.myserver.net", running: true },
-  ],
+  projects: [],
   currentProject: null,
-  showNewModal:   false,
-  loading:        false,
-  newType:        "discord",
-  newName:        "",
-  newLang:        "Python",
-  newMcVersion:   "1.21.5",
-  newMcIp:        "",
-  editorFile:     "main.py",
-  codeContent:    SAMPLE_BOT_CODE,
-  mcView:         "overview",
-  mcCmd:          "",
-  botLogs:        DEFAULT_BOT_LOGS.slice(),
-  mcLogs:         DEFAULT_MC_LOGS.slice(),
-  mcFiles:        DEFAULT_MC_FILES.slice(),
-  mcMods:         JSON.parse(JSON.stringify(DEFAULT_MC_MODS)),
-  username:       sessionStorage.getItem("rc_user") || "realalex",
+  showNewModal: false,
+  loading: false,
+  newType: "discord",
+  newName: "",
+  newLang: "Python",
+  newMcVersion: "1.21.5",
+  newMcIp: "",
+  editorFile: "main.py",
+  codeContent: "",
+  mcView: "overview",
+  mcCmd: "",
+  botLogs: [],
+  mcLogs: [],
+  mcFiles: [],
+  mcMods: [],
+  onlinePlayers: [],
+  username: sessionStorage.getItem("rc_user") || "user",
 };
 
 let renderPending = false;
@@ -207,6 +198,24 @@ function fileIconEl(type) {
   return iconEl(map[type] || "doc");
 }
 
+function showToast(id) {
+  const t = document.getElementById(id);
+  if (!t) return;
+  t.style.opacity = "1";
+  t.style.transform = "translateY(0)";
+  setTimeout(() => {
+    t.style.opacity = "0";
+    t.style.transform = "translateY(8px)";
+  }, 1600);
+}
+
+document.addEventListener("keydown", (ev) => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") {
+    ev.preventDefault();
+    if (state.page === "bot-dashboard") showToast("save-toast");
+  }
+});
+
 function render() {
   const app = document.getElementById("app");
   const frag = document.createDocumentFragment();
@@ -227,8 +236,7 @@ function renderLoading() {
   const isMc = state.newType === "minecraft";
   const wrap = el("div", { className: "loading-screen" + (isMc ? " mc" : "") });
   const iconWrap = el("div", { className: "loading-icon-wrap" });
-  const ic = el("span", { className: "icon-" + (isMc ? "pickaxe" : "bot"), style: { width:"32px", height:"32px", display:"block" } });
-  iconWrap.appendChild(ic);
+  iconWrap.appendChild(el("span", { className: "icon-" + (isMc ? "pickaxe" : "bot"), style: { width:"32px", height:"32px", display:"block" } }));
   wrap.appendChild(iconWrap);
   const bar = el("div", { className: "loading-bar" });
   bar.appendChild(el("div", { className: "loading-bar-fill" + (isMc ? " mc" : "") }));
@@ -266,22 +274,34 @@ function renderProjectsPage() {
   const header = el("div", { className: "projects-header" });
   const titleDiv = el("div", { className: "projects-title" });
   titleDiv.appendChild(el("h1", {}, "Your Projects"));
-  titleDiv.appendChild(el("p", {}, "Manage and monitor your Discord bot and Minecraft server projects"));
+  titleDiv.appendChild(el("p", {}, "Manage your Discord bots and Minecraft servers"));
   header.appendChild(titleDiv);
   const btnNew = el("button", { className: "btn-new", onClick: () => { state.showNewModal = true; scheduleRender(); } });
   btnNew.appendChild(iconEl("plus"));
   btnNew.appendChild(document.createTextNode(" New Project"));
   header.appendChild(btnNew);
   page.appendChild(header);
-  const grid = el("div", { className: "projects-grid" });
+
   if (state.projects.length === 0) {
-    grid.appendChild(el("p", { style: { color:"var(--text-muted)", fontSize:"13px" } }, "No projects yet. Create one!"));
+    const empty = el("div", { className: "empty-state" });
+    const emptyIcon = el("div", { className: "empty-icon" });
+    emptyIcon.appendChild(el("span", { className: "icon-folder", style: { width:"32px", height:"32px", display:"block" } }));
+    empty.appendChild(emptyIcon);
+    empty.appendChild(el("div", { className: "empty-title" }, "No projects yet"));
+    empty.appendChild(el("div", { className: "empty-sub" }, "Create your first Discord bot or Minecraft server to get started."));
+    const emptyBtn = el("button", { className: "btn-new", style: { margin:"0 auto" }, onClick: () => { state.showNewModal = true; scheduleRender(); } });
+    emptyBtn.appendChild(iconEl("plus"));
+    emptyBtn.appendChild(document.createTextNode(" Create Project"));
+    empty.appendChild(emptyBtn);
+    page.appendChild(empty);
   } else {
+    const grid = el("div", { className: "projects-grid" });
     const docFrag = document.createDocumentFragment();
     state.projects.forEach(p => docFrag.appendChild(renderProjectCard(p)));
     grid.appendChild(docFrag);
+    page.appendChild(grid);
   }
-  page.appendChild(grid);
+
   frag.appendChild(page);
   if (state.showNewModal) frag.appendChild(renderModal());
   return frag;
@@ -291,21 +311,18 @@ function renderProjectCard(p) {
   const card = el("div", { className: "project-card" });
   const top = el("div", { className: "card-top" });
   const iconWrap = el("div", { className: "card-icon " + (p.type === "minecraft" ? "mc" : "discord") });
-  const ic = el("span", { className: "icon-" + (p.type === "minecraft" ? "pickaxe" : "bot"), style: { width:"22px", height:"22px", display:"block" } });
-  iconWrap.appendChild(ic);
+  iconWrap.appendChild(el("span", { className: "icon-" + (p.type === "minecraft" ? "pickaxe" : "bot"), style: { width:"22px", height:"22px", display:"block" } }));
   top.appendChild(iconWrap);
   top.appendChild(el("div", { className: "card-dot" + (p.running ? "" : " stopped") }));
   card.appendChild(top);
   card.appendChild(el("div", { className: "card-name" }, p.name));
   const tags = el("div", { className: "card-tags" });
-  tags.appendChild(el("span", { className: "tag" }, p.type === "minecraft" ? "MC " + p.version : p.lang));
+  tags.appendChild(el("span", { className: "tag" }, p.type === "minecraft" ? p.version : p.lang));
   tags.appendChild(el("span", { className: "tag " + (p.running ? "running" : "stopped") }, p.running ? "Running" : "Stopped"));
   card.appendChild(tags);
   const actions = el("div", { className: "card-actions" });
-  const manage = el("button", { className: "btn-manage", onClick: () => openProject(p.id) }, "Manage");
-  const del = el("button", { className: "btn-delete", onClick: () => deleteProject(p.id) }, "Delete");
-  actions.appendChild(manage);
-  actions.appendChild(del);
+  actions.appendChild(el("button", { className: "btn-manage", onClick: () => openProject(p.id) }, "Manage"));
+  actions.appendChild(el("button", { className: "btn-delete", onClick: () => deleteProject(p.id) }, "Delete"));
   card.appendChild(actions);
   return card;
 }
@@ -318,15 +335,15 @@ function renderModal() {
   const tabs = el("div", { className: "modal-type-tabs" });
 
   const tabDis = el("button", { className: "type-tab" + (!isMc ? " active" : ""), onClick: () => { state.newType = "discord"; scheduleRender(); } });
-  const disIconWrap = el("div", { className: "type-tab-icon" });
-  disIconWrap.appendChild(el("span", { className: "icon-bot", style: { width:"20px", height:"20px", display:"block" } }));
-  tabDis.appendChild(disIconWrap);
+  const disIW = el("div", { className: "type-tab-icon" });
+  disIW.appendChild(el("span", { className: "icon-bot", style: { width:"20px", height:"20px", display:"block" } }));
+  tabDis.appendChild(disIW);
   tabDis.appendChild(document.createTextNode("Discord Bot"));
 
   const tabMc = el("button", { className: "type-tab" + (isMc ? " active" : ""), onClick: () => { state.newType = "minecraft"; scheduleRender(); } });
-  const mcIconWrap = el("div", { className: "type-tab-icon" });
-  mcIconWrap.appendChild(el("span", { className: "icon-pickaxe", style: { width:"20px", height:"20px", display:"block" } }));
-  tabMc.appendChild(mcIconWrap);
+  const mcIW = el("div", { className: "type-tab-icon" });
+  mcIW.appendChild(el("span", { className: "icon-pickaxe", style: { width:"20px", height:"20px", display:"block" } }));
+  tabMc.appendChild(mcIW);
   tabMc.appendChild(document.createTextNode("Minecraft Server"));
 
   tabs.appendChild(tabDis);
@@ -335,7 +352,7 @@ function renderModal() {
 
   const nameGroup = el("div", { className: "form-group" });
   nameGroup.appendChild(el("label", { className: "form-label" }, "Project Name"));
-  const nameInput = el("input", { className: "form-input", placeholder: isMc ? "e.g. my-survival-server" : "e.g. my-bot", value: state.newName });
+  const nameInput = el("input", { className: "form-input", placeholder: isMc ? "e.g. survival-server" : "e.g. my-bot", value: state.newName });
   nameInput.oninput = () => {
     state.newName = nameInput.value;
     const btn = document.getElementById("createBtn");
@@ -346,7 +363,7 @@ function renderModal() {
 
   if (isMc) {
     const vGroup = el("div", { className: "form-group" });
-    vGroup.appendChild(el("label", { className: "form-label" }, "Minecraft Version"));
+    vGroup.appendChild(el("label", { className: "form-label" }, "Server Version"));
     const sel = el("select", { className: "form-select" });
     const optFrag = document.createDocumentFragment();
     MC_VERSIONS.forEach(v => {
@@ -363,9 +380,8 @@ function renderModal() {
     ipGroup.appendChild(el("label", { className: "form-label" }, "Server IP / Domain"));
     const ipInput = el("input", { className: "form-input", placeholder: "e.g. play.myserver.net", value: state.newMcIp });
     ipInput.oninput = () => { state.newMcIp = ipInput.value; };
-    const ipNote = el("div", { style: { fontSize:"11px", color:"var(--text-muted)", marginTop:"5px" } }, "Players will connect with this address.");
     ipGroup.appendChild(ipInput);
-    ipGroup.appendChild(ipNote);
+    ipGroup.appendChild(el("div", { style: { fontSize:"11px", color:"var(--text-muted)", marginTop:"5px" } }, "Leave blank to auto-generate."));
     modal.appendChild(ipGroup);
   } else {
     const lGroup = el("div", { className: "form-group" });
@@ -381,59 +397,73 @@ function renderModal() {
     modal.appendChild(lGroup);
   }
 
-  const actions = el("div", { className: "modal-actions" });
-  actions.appendChild(el("button", { className: "btn-cancel", onClick: () => { state.showNewModal = false; scheduleRender(); } }, "Cancel"));
-  const createBtn = el("button", { className: "btn-create", id: "createBtn", onClick: createProject }, "Create");
+  const acts = el("div", { className: "modal-actions" });
+  acts.appendChild(el("button", { className: "btn-cancel", onClick: () => { state.showNewModal = false; scheduleRender(); } }, "Cancel"));
+  const createBtn = el("button", { className: "btn-create", id: "createBtn", onClick: createProject }, "Create Project");
   createBtn.disabled = !state.newName.trim();
-  actions.appendChild(createBtn);
-  modal.appendChild(actions);
+  acts.appendChild(createBtn);
+  modal.appendChild(acts);
   overlay.appendChild(modal);
+
+  requestAnimationFrame(() => {
+    const ni = overlay.querySelector(".form-input");
+    if (ni) ni.focus();
+  });
+
   return overlay;
 }
 
 function createProject() {
   if (!state.newName.trim()) return;
   const id = Date.now();
+  const slug = state.newName.trim().toLowerCase().replace(/\s+/g, "-");
   const p = {
     id,
-    name:    state.newName.trim(),
-    type:    state.newType,
-    lang:    state.newLang,
+    name: state.newName.trim(),
+    type: state.newType,
+    lang: state.newLang,
     version: state.newMcVersion,
-    ip:      state.newMcIp || (state.newName.toLowerCase().replace(/\s+/g, "-") + ".rebootcord.io"),
+    ip: state.newMcIp.trim() || (slug + ".rebootcord.io"),
     running: true,
   };
   state.projects.push(p);
   state.currentProject = p;
-  state.newName  = "";
-  state.newMcIp  = "";
-  state.mcView   = "overview";
-  state.mcFiles  = DEFAULT_MC_FILES.slice();
-  state.mcMods   = JSON.parse(JSON.stringify(DEFAULT_MC_MODS));
-  state.mcLogs   = DEFAULT_MC_LOGS.slice();
-  state.botLogs  = DEFAULT_BOT_LOGS.slice();
-  state.loading  = true;
+  state.newName = "";
+  state.newMcIp = "";
+  state.mcView = "overview";
+  state.mcFiles = [];
+  state.mcMods = [];
+  state.mcLogs = [];
+  state.botLogs = [];
+  state.codeContent = "";
+  state.onlinePlayers = [];
+  state.loading = true;
   render();
 }
 
 function openProject(id) {
-  state.currentProject = state.projects.find(p => p.id === id);
-  state.page    = state.currentProject.type === "minecraft" ? "mc-dashboard" : "bot-dashboard";
-  state.mcView  = "overview";
-  state.mcFiles = DEFAULT_MC_FILES.slice();
-  state.mcMods  = JSON.parse(JSON.stringify(DEFAULT_MC_MODS));
+  const p = state.projects.find(pr => pr.id === id);
+  if (!p) return;
+  state.currentProject = p;
+  state.page = p.type === "minecraft" ? "mc-dashboard" : "bot-dashboard";
+  state.mcView = "overview";
   render();
 }
 
 function deleteProject(id) {
-  if (!confirm("Delete this project?")) return;
+  if (!confirm("Delete this project? This cannot be undone.")) return;
   state.projects = state.projects.filter(p => p.id !== id);
   render();
 }
 
 function renderBotDashboard() {
-  const p = state.currentProject || state.projects.find(pr => pr.type === "discord") || {};
+  const p = state.currentProject || {};
   const frag = document.createDocumentFragment();
+
+  frag.appendChild(el("div", {
+    id: "save-toast",
+    style: { position:"fixed", bottom:"24px", right:"24px", background:"var(--green)", color:"#000", padding:"10px 18px", borderRadius:"8px", fontWeight:"800", fontSize:"12px", zIndex:"500", opacity:"0", transform:"translateY(8px)", transition:"opacity .2s,transform .2s", pointerEvents:"none" }
+  }, "File saved"));
 
   const dnav = el("nav", { className: "dash-nav" });
   const backBtn = el("button", { className: "btn-back", onClick: () => { state.page = "projects"; render(); } });
@@ -441,15 +471,19 @@ function renderBotDashboard() {
   backBtn.appendChild(document.createTextNode(" Back"));
   dnav.appendChild(backBtn);
   dnav.appendChild(el("span", { className: "dash-project-name" }, p.name || "Bot Project"));
-  const langTag = el("span", { className: "tag", style: { fontSize:"11px" } }, p.lang || "Python");
-  dnav.appendChild(langTag);
-
+  dnav.appendChild(el("span", { className: "tag", style: { fontSize:"11px" } }, p.lang || "Python"));
   const dtags = el("div", { className: "dash-tags" });
   const chip = el("div", { className: "status-chip" });
   chip.appendChild(el("div", { className: "status-dot" }));
   chip.appendChild(document.createTextNode(" Running"));
   dtags.appendChild(chip);
-  const stopBtn = el("button", { className: "btn-stop", onClick: () => alert("Bot stopped.") });
+  const stopBtn = el("button", { className: "btn-stop", onClick: () => {
+    if (confirm("Stop this bot?")) {
+      state.botLogs.push({ t: getTime(), type: "warn", msg: "[SYS] Bot process stopped by user." });
+      trimLogs(state.botLogs);
+      render();
+    }
+  }});
   stopBtn.appendChild(el("span", { className: "icon-stop" }));
   stopBtn.appendChild(document.createTextNode(" Stop"));
   dtags.appendChild(stopBtn);
@@ -464,20 +498,15 @@ function renderBotDashboard() {
   filesLbl.appendChild(iconEl("folder"));
   filesLbl.appendChild(document.createTextNode(" Files"));
   filesSection.appendChild(filesLbl);
-
   [
-    { name: "main.py",           icon: "doc",  badge: "main", active: true },
-    { name: "requirements.txt",  icon: "list"  },
-    { name: "config.json",       icon: "gear"  },
+    { name: "main.py",          icon: "doc",  badge: "main" },
+    { name: "requirements.txt", icon: "list" },
+    { name: "config.json",      icon: "gear" },
   ].forEach(f => {
-    const row = el("div", { className: "sidebar-file" + (f.active ? " active" : ""), onClick: () => { state.editorFile = f.name; scheduleRender(); } });
-    const ic = el("span", { className: "icon-" + f.icon, style: { width:"14px", height:"14px", display:"inline-block", flexShrink:"0" } });
-    row.appendChild(ic);
+    const row = el("div", { className: "sidebar-file" + (state.editorFile === f.name ? " active" : ""), onClick: () => { state.editorFile = f.name; scheduleRender(); } });
+    row.appendChild(el("span", { className: "icon-" + f.icon, style: { width:"14px", height:"14px", display:"inline-block", flexShrink:"0" } }));
     row.appendChild(document.createTextNode(" " + f.name));
-    if (f.badge) {
-      const badge = el("span", { className: "file-badge" }, f.badge);
-      row.appendChild(badge);
-    }
+    if (f.badge) row.appendChild(el("span", { className: "file-badge" }, f.badge));
     filesSection.appendChild(row);
   });
   sb.appendChild(filesSection);
@@ -488,6 +517,7 @@ function renderBotDashboard() {
   pkgLbl.appendChild(document.createTextNode(" Packages"));
   pkgSection.appendChild(pkgLbl);
   const pkgInput = el("input", { className: "pkg-input", id: "pkgInput", placeholder: "package name" });
+  pkgInput.onkeydown = (ev) => { if (ev.key === "Enter") installPkg(); };
   pkgSection.appendChild(pkgInput);
   const installBtn = el("button", { className: "btn-install", onClick: installPkg });
   installBtn.appendChild(iconEl("download"));
@@ -504,8 +534,8 @@ function renderBotDashboard() {
   const tokenField = el("div", { className: "settings-field" });
   tokenField.appendChild(el("label", {}, "Bot Token"));
   const tRow = el("div", { className: "settings-row" });
-  const tInput = el("input", { className: "settings-input", type: "password", id: "tokenInput", value: "MTUwNjAzMjIzMDISNDYx" });
-  const tSaveBtn = el("button", { className: "btn-save", onClick: () => alert("Token saved!") });
+  const tInput = el("input", { className: "settings-input", type: "password", placeholder: "Paste your bot token..." });
+  const tSaveBtn = el("button", { className: "btn-save", onClick: () => { if (tInput.value.trim()) showToast("save-toast"); } });
   tSaveBtn.appendChild(iconEl("save"));
   tRow.appendChild(tInput);
   tRow.appendChild(tSaveBtn);
@@ -514,15 +544,13 @@ function renderBotDashboard() {
 
   const mainFileField = el("div", { className: "settings-field" });
   mainFileField.appendChild(el("label", {}, "Main File"));
-  const mfInput = el("input", { className: "settings-input", value: "main.py", readOnly: "true" });
-  mainFileField.appendChild(mfInput);
+  mainFileField.appendChild(el("input", { className: "settings-input", value: state.editorFile, readOnly: "true" }));
   settingsSection.appendChild(mainFileField);
 
   const autoField = el("div", { className: "settings-field", style: { display:"flex", alignItems:"center", gap:"8px" } });
   const autoCheck = el("input", { type: "checkbox", id: "autoRestart", style: { accentColor:"var(--red)" } });
-  const autoLbl = el("label", { htmlFor: "autoRestart", style: { fontSize:"12px", color:"var(--text-dim)" } }, "Auto-restart on crash");
   autoField.appendChild(autoCheck);
-  autoField.appendChild(autoLbl);
+  autoField.appendChild(el("label", { htmlFor: "autoRestart", style: { fontSize:"12px", color:"var(--text-dim)", cursor:"pointer" } }, "Auto-restart on crash"));
   settingsSection.appendChild(autoField);
   sb.appendChild(settingsSection);
   dash.appendChild(sb);
@@ -530,16 +558,31 @@ function renderBotDashboard() {
   const main = el("div", { className: "main-area" });
   const toolbar = el("div", { className: "editor-toolbar" });
   toolbar.appendChild(el("span", { className: "editor-filename" }, state.editorFile));
-  const saveFileBtn = el("button", { className: "btn-save-file", onClick: () => alert("File saved!") });
+  toolbar.appendChild(el("span", { style: { fontSize:"10px", color:"var(--text-muted)", fontFamily:"var(--mono)", marginLeft:"auto", marginRight:"10px" } }, "Ctrl+S to save"));
+  const saveFileBtn = el("button", { className: "btn-save-file", onClick: () => showToast("save-toast") });
   saveFileBtn.appendChild(iconEl("save"));
   saveFileBtn.appendChild(document.createTextNode(" Save"));
   toolbar.appendChild(saveFileBtn);
   main.appendChild(toolbar);
 
   const edArea = el("div", { className: "editor-area" });
-  const ta = el("textarea", { className: "code-editor", spellcheck: "false" });
+  const ta = el("textarea", { className: "code-editor", spellcheck: "false", placeholder: "Write your bot code here..." });
   ta.value = state.codeContent;
   ta.oninput = () => { state.codeContent = ta.value; };
+  ta.onkeydown = (ev) => {
+    if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") {
+      ev.preventDefault();
+      showToast("save-toast");
+    }
+    if (ev.key === "Tab") {
+      ev.preventDefault();
+      const s = ta.selectionStart;
+      const e = ta.selectionEnd;
+      ta.value = ta.value.substring(0, s) + "  " + ta.value.substring(e);
+      ta.selectionStart = ta.selectionEnd = s + 2;
+      state.codeContent = ta.value;
+    }
+  };
   edArea.appendChild(ta);
   main.appendChild(edArea);
   main.appendChild(buildConsole());
@@ -554,25 +597,31 @@ function buildConsole() {
   toolbar.appendChild(el("span", { className: "console-label" }, "Console"));
   const controls = el("div", { className: "console-controls" });
   const autoLabel = el("label", { className: "console-auto" });
-  const autoChk = el("input", { type: "checkbox", checked: "true" });
-  autoLabel.appendChild(autoChk);
+  autoLabel.appendChild(el("input", { type: "checkbox", checked: "true" }));
   autoLabel.appendChild(document.createTextNode(" Auto-scroll"));
-  const clearBtn = el("button", { className: "btn-clear", onClick: () => { state.botLogs = []; render(); } }, "Clear");
   controls.appendChild(autoLabel);
-  controls.appendChild(clearBtn);
+  controls.appendChild(el("button", { className: "btn-clear", onClick: () => { state.botLogs = []; render(); } }, "Clear"));
   toolbar.appendChild(controls);
   panel.appendChild(toolbar);
 
-  const body = el("div", { className: "console-body" });
-  const logFrag = document.createDocumentFragment();
-  state.botLogs.forEach(l => {
-    const line = el("div", { className: "log-line" });
-    line.appendChild(el("span", { className: "log-time" }, l.t));
-    line.appendChild(el("span", { className: "log-" + l.type }, l.msg));
-    logFrag.appendChild(line);
-  });
-  body.appendChild(logFrag);
+  const body = el("div", { className: "console-body", id: "botConsoleBody" });
+  if (state.botLogs.length === 0) {
+    body.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"11px", fontFamily:"var(--mono)", paddingTop:"4px" } }, "Console output will appear here..."));
+  } else {
+    const logFrag = document.createDocumentFragment();
+    state.botLogs.forEach(l => {
+      const line = el("div", { className: "log-line" });
+      line.appendChild(el("span", { className: "log-time" }, l.t));
+      line.appendChild(el("span", { className: "log-" + l.type }, l.msg));
+      logFrag.appendChild(line);
+    });
+    body.appendChild(logFrag);
+  }
   panel.appendChild(body);
+  requestAnimationFrame(() => {
+    const b = document.getElementById("botConsoleBody");
+    if (b) b.scrollTop = b.scrollHeight;
+  });
   return panel;
 }
 
@@ -580,6 +629,7 @@ function installPkg() {
   const input = document.getElementById("pkgInput");
   const v = input ? input.value.trim() : "";
   if (!v) return;
+  if (input) input.value = "";
   const t = getTime();
   state.botLogs.push({ t, type: "info", msg: "[PKG] Installing " + v + "..." });
   trimLogs(state.botLogs);
@@ -592,7 +642,7 @@ function installPkg() {
 }
 
 function renderMcDashboard() {
-  const p = state.currentProject || state.projects.find(pr => pr.type === "minecraft") || {};
+  const p = state.currentProject || {};
   const frag = document.createDocumentFragment();
 
   const dnav = el("nav", { className: "dash-nav", style: { borderBottomColor:"#162016" } });
@@ -601,13 +651,18 @@ function renderMcDashboard() {
   backBtn.appendChild(document.createTextNode(" Back"));
   dnav.appendChild(backBtn);
   dnav.appendChild(el("span", { className: "dash-project-name" }, p.name || "Minecraft Server"));
-
   const dtags = el("div", { className: "dash-tags" });
   const chip = el("div", { className: "status-chip" });
   chip.appendChild(el("div", { className: "status-dot" }));
   chip.appendChild(document.createTextNode(" Running"));
   dtags.appendChild(chip);
-  const stopBtn = el("button", { className: "btn-stop", onClick: () => alert("Server stopping...") });
+  const stopBtn = el("button", { className: "btn-stop", onClick: () => {
+    if (confirm("Stop this server?")) {
+      state.mcLogs.push({ t: getTime(), type: "warn", msg: "[Server thread/INFO]: Stopping the server..." });
+      trimLogs(state.mcLogs);
+      scheduleRender();
+    }
+  }});
   stopBtn.appendChild(el("span", { className: "icon-stop" }));
   stopBtn.appendChild(document.createTextNode(" Stop"));
   dtags.appendChild(stopBtn);
@@ -622,16 +677,16 @@ function renderMcDashboard() {
   hdr.appendChild(el("div", { className: "mc-server-ip" }, p.ip || "play.server.net"));
   const vtag = el("span", { className: "mc-version-tag" });
   vtag.appendChild(el("span", { className: "icon-cube", style: { width:"12px", height:"12px", display:"inline-block" } }));
-  vtag.appendChild(document.createTextNode(" MC " + (p.version || "1.21.1")));
+  vtag.appendChild(document.createTextNode(" " + (p.version || "1.21.5")));
   hdr.appendChild(vtag);
   sb.appendChild(hdr);
 
   const navWrap = el("div", { style: { padding:"8px 0" } });
   [
-    { id: "overview", iconType: "chart",    label: "Overview"      },
-    { id: "files",    iconType: "folder",   label: "Files"         },
-    { id: "mods",     iconType: "plug",     label: "Mods / Plugins" },
-    { id: "console",  iconType: "terminal", label: "Console"       },
+    { id:"overview", iconType:"chart",    label:"Overview"       },
+    { id:"files",    iconType:"folder",   label:"Files"          },
+    { id:"mods",     iconType:"plug",     label:"Mods / Plugins" },
+    { id:"console",  iconType:"terminal", label:"Console"        },
   ].forEach(item => {
     const btn = el("button", { className: "mc-nav-btn" + (state.mcView === item.id ? " active" : ""), onClick: () => { state.mcView = item.id; scheduleRender(); } });
     btn.appendChild(el("span", { className: "icon-" + item.iconType, style: { width:"16px", height:"16px", display:"inline-block" } }));
@@ -641,14 +696,21 @@ function renderMcDashboard() {
   sb.appendChild(navWrap);
 
   const qa = el("div", { style: { padding:"14px", marginTop:"auto", borderTop:"1px solid #162016" } });
-  const qaLbl = el("div", { style: { fontSize:"10px", color:"var(--text-muted)", marginBottom:"8px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".08em" } }, "Quick Actions");
-  qa.appendChild(qaLbl);
+  qa.appendChild(el("div", { style: { fontSize:"10px", color:"var(--text-muted)", marginBottom:"8px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".08em" } }, "Quick Actions"));
 
-  const restartBtn = el("button", { style: { width:"100%", background:"#1c381c", color:"var(--mc-bright)", border:"none", padding:"8px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", marginBottom:"6px", display:"flex", alignItems:"center", justifyContent:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => { state.mcLogs.push({ t: getTime(), type: "server", msg: "[Server thread/INFO]: Restarting server..." }); trimLogs(state.mcLogs); scheduleRender(); } });
+  const restartBtn = el("button", { style: { width:"100%", background:"#1c381c", color:"var(--mc-bright)", border:"none", padding:"8px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", marginBottom:"6px", display:"flex", alignItems:"center", justifyContent:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => {
+    state.mcLogs.push({ t: getTime(), type: "server", msg: "[Server thread/INFO]: Restarting server..." });
+    trimLogs(state.mcLogs);
+    scheduleRender();
+  }});
   restartBtn.appendChild(iconEl("refresh"));
   restartBtn.appendChild(document.createTextNode(" Restart Server"));
 
-  const backupBtn = el("button", { style: { width:"100%", background:"#1a1a1a", color:"var(--text-dim)", border:"none", padding:"8px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => alert("World backup created successfully!") });
+  const backupBtn = el("button", { style: { width:"100%", background:"#1a1a1a", color:"var(--text-dim)", border:"none", padding:"8px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => {
+    state.mcLogs.push({ t: getTime(), type: "info", msg: "[Server thread/INFO]: World backup completed successfully." });
+    trimLogs(state.mcLogs);
+    scheduleRender();
+  }});
   backupBtn.appendChild(iconEl("save"));
   backupBtn.appendChild(document.createTextNode(" Backup World"));
 
@@ -659,13 +721,13 @@ function renderMcDashboard() {
 
   const main = el("div", { className: "mc-main" });
   if (state.mcView === "console") {
-    main.style.cssText = "display:flex;flex-direction:column";
+    main.style.cssText = "display:flex;flex-direction:column;flex:1";
     main.appendChild(buildMcConsole(p));
   } else {
     const content = el("div", { className: "mc-content" });
-    if (state.mcView === "overview")     buildMcOverview(content, p);
-    else if (state.mcView === "files")   buildMcFiles(content);
-    else if (state.mcView === "mods")    buildMcMods(content);
+    if (state.mcView === "overview")   buildMcOverview(content, p);
+    else if (state.mcView === "files") buildMcFiles(content);
+    else if (state.mcView === "mods")  buildMcMods(content);
     main.appendChild(content);
   }
 
@@ -676,15 +738,15 @@ function renderMcDashboard() {
 
 function buildMcOverview(container, p) {
   const stats = [
-    { label: "Status",  html: '<span style="font-size:16px;color:var(--green);font-weight:800">Online</span>', sub: "24/7 Uptime" },
-    { label: "Players", html: '3<span style="font-size:14px;color:var(--text-muted)">/20</span>',              sub: "Online now"  },
-    { label: "Version", html: '<span style="font-size:16px">' + (p.version || "1.21.1") + '</span>',           sub: "Java Edition" },
-    { label: "RAM",     html: '1.2<span style="font-size:14px;color:var(--text-muted)">GB</span>',             sub: "of 2GB"       },
-    { label: "TPS",     html: "20",                                                                             sub: "Ticks/sec"    },
-    { label: "Uptime",  html: '<span style="font-size:16px">4h 32m</span>',                                    sub: "Since restart" },
+    { label:"Status",  html:'<span style="font-size:16px;color:var(--green);font-weight:800">Online</span>', sub:"24/7 Uptime" },
+    { label:"Players", html:'0<span style="font-size:14px;color:var(--text-muted)">/20</span>',              sub:"Online now"   },
+    { label:"Version", html:'<span style="font-size:13px">' + (p.version || "1.21.5") + '</span>',          sub:"Java Edition" },
+    { label:"RAM",     html:'0<span style="font-size:14px;color:var(--text-muted)">MB</span>',               sub:"of 2GB"       },
+    { label:"TPS",     html:"20",                                                                             sub:"Ticks/sec"    },
+    { label:"Uptime",  html:'<span style="font-size:16px">0m</span>',                                        sub:"Since restart" },
   ];
   const grid = el("div", { className: "mc-stats-grid" });
-  const gridFrag = document.createDocumentFragment();
+  const gFrag = document.createDocumentFragment();
   stats.forEach(s => {
     const card = el("div", { className: "mc-stat" });
     card.appendChild(el("div", { className: "mc-stat-label" }, s.label));
@@ -692,74 +754,98 @@ function buildMcOverview(container, p) {
     val.innerHTML = s.html;
     card.appendChild(val);
     card.appendChild(el("div", { className: "mc-stat-sub" }, s.sub));
-    gridFrag.appendChild(card);
+    gFrag.appendChild(card);
   });
-  grid.appendChild(gridFrag);
+  grid.appendChild(gFrag);
   container.appendChild(grid);
 
   container.appendChild(el("div", { className: "mc-section-title" }, "Server IP"));
   const ipRow = el("div", { style: { background:"#090f09", border:"1px solid #162016", borderRadius:"8px", padding:"14px", marginBottom:"20px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:"8px" } });
-  const ipText = el("span", { style: { fontFamily:"var(--mono)", color:"var(--mc-bright)", fontSize:"15px", fontWeight:"600" } }, p.ip || "play.myserver.net");
-  const copyBtn = el("button", { style: { background:"#1c381c", color:"var(--mc-bright)", border:"1px solid #2a5a2a", padding:"6px 13px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => { if (navigator.clipboard) navigator.clipboard.writeText(p.ip || "play.myserver.net"); copyBtn.lastChild.textContent = "Copied!"; setTimeout(() => { copyBtn.lastChild.textContent = "Copy IP"; }, 1400); } });
+  ipRow.appendChild(el("span", { style: { fontFamily:"var(--mono)", color:"var(--mc-bright)", fontSize:"15px", fontWeight:"600" } }, p.ip || "play.myserver.net"));
+  const copyBtn = el("button", { style: { background:"#1c381c", color:"var(--mc-bright)", border:"1px solid #2a5a2a", padding:"6px 13px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => {
+    if (navigator.clipboard) navigator.clipboard.writeText(p.ip || "play.myserver.net");
+    copyBtn.lastChild.textContent = "Copied!";
+    setTimeout(() => { copyBtn.lastChild.textContent = "Copy IP"; }, 1400);
+  }});
   copyBtn.appendChild(iconEl("copy"));
   copyBtn.appendChild(document.createTextNode("Copy IP"));
-  ipRow.appendChild(ipText);
   ipRow.appendChild(copyBtn);
   container.appendChild(ipRow);
 
   container.appendChild(el("div", { className: "mc-section-title" }, "Online Players"));
-  const playerFrag = document.createDocumentFragment();
-  ["Notch", "jeb_", "herobrine"].forEach(name => {
-    const row = el("div", { style: { display:"flex", alignItems:"center", gap:"10px", background:"#090f09", border:"1px solid #162016", borderRadius:"8px", padding:"10px 13px", marginBottom:"6px" } });
-    row.appendChild(el("span", { className: "icon-cube", style: { width:"16px", height:"16px", display:"inline-block", color:"var(--mc-bright)" } }));
-    row.appendChild(el("span", { style: { fontSize:"12px", fontFamily:"var(--mono)" } }, name));
-    row.appendChild(el("span", { style: { marginLeft:"auto", fontSize:"11px", color:"var(--green)" } }, "Online"));
-    const kickBtn = el("button", { style: { background:"#1c2a1c", color:"var(--red)", border:"none", padding:"4px 10px", borderRadius:"5px", fontSize:"11px", cursor:"pointer", fontWeight:"700", fontFamily:"var(--font)", display:"flex", alignItems:"center", gap:"4px" }, onClick: () => { if (confirm("Kick " + name + "?")) row.remove(); } });
-    kickBtn.appendChild(iconEl("kick"));
-    kickBtn.appendChild(document.createTextNode(" Kick"));
-    row.appendChild(kickBtn);
-    playerFrag.appendChild(row);
-  });
-  container.appendChild(playerFrag);
+  if (state.onlinePlayers.length === 0) {
+    const emptyP = el("div", { style: { background:"#090f09", border:"1px solid #162016", borderRadius:"8px", padding:"20px", textAlign:"center" } });
+    emptyP.appendChild(el("div", { style: { fontSize:"11px", fontFamily:"var(--mono)", color:"var(--text-muted)" } }, "No players currently online"));
+    container.appendChild(emptyP);
+  } else {
+    const pFrag = document.createDocumentFragment();
+    state.onlinePlayers.forEach((name, i) => {
+      const row = el("div", { style: { display:"flex", alignItems:"center", gap:"10px", background:"#090f09", border:"1px solid #162016", borderRadius:"8px", padding:"10px 13px", marginBottom:"6px" } });
+      row.appendChild(el("span", { className: "icon-cube", style: { width:"16px", height:"16px", display:"inline-block", color:"var(--mc-bright)" } }));
+      row.appendChild(el("span", { style: { fontSize:"12px", fontFamily:"var(--mono)" } }, name));
+      row.appendChild(el("span", { style: { marginLeft:"auto", fontSize:"11px", color:"var(--green)" } }, "Online"));
+      const kickBtn = el("button", { style: { background:"#1c2a1c", color:"var(--red)", border:"none", padding:"4px 10px", borderRadius:"5px", fontSize:"11px", cursor:"pointer", fontWeight:"700", fontFamily:"var(--font)", display:"flex", alignItems:"center", gap:"4px" }, onClick: () => {
+        if (confirm("Kick " + name + "?")) {
+          state.onlinePlayers.splice(i, 1);
+          state.mcLogs.push({ t: getTime(), type: "warn", msg: "[Server thread/INFO]: Kicked " + name + " from the server." });
+          trimLogs(state.mcLogs);
+          render();
+        }
+      }});
+      kickBtn.appendChild(iconEl("kick"));
+      kickBtn.appendChild(document.createTextNode(" Kick"));
+      row.appendChild(kickBtn);
+      pFrag.appendChild(row);
+    });
+    container.appendChild(pFrag);
+  }
 }
 
 function buildMcFiles(container) {
   const topRow = el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"12px", flexWrap:"wrap", gap:"8px" } });
-  const title = el("div", { className: "mc-section-title", style: { marginBottom:"0" } }, "Server Files");
-  topRow.appendChild(title);
-  const upBtn = el("button", { className: "btn-upload-mod", onClick: () => alert("Upload file dialog would open here.") });
+  topRow.appendChild(el("div", { className: "mc-section-title", style: { marginBottom:"0" } }, "Server Files"));
+  const upBtn = el("button", { className: "btn-upload-mod", onClick: () => {
+    const name = prompt("File name (e.g. server.properties):");
+    if (name && name.trim()) { state.mcFiles.push({ name: name.trim(), size: "0 KB", type: "doc" }); render(); }
+  }});
   upBtn.appendChild(iconEl("upload"));
   upBtn.appendChild(document.createTextNode(" Upload File"));
   topRow.appendChild(upBtn);
   container.appendChild(topRow);
 
-  const list = el("div", { className: "files-list" });
-  const listFrag = document.createDocumentFragment();
-  state.mcFiles.forEach((f, i) => {
-    const item = el("div", { className: "file-item" });
-    const icEl = fileIconEl(f.type || "doc");
-    icEl.style.cssText = "width:18px;height:18px;color:var(--mc-bright)";
-    item.appendChild(icEl);
-    item.appendChild(el("span", { className: "file-item-name" }, f.name));
-    item.appendChild(el("span", { className: "file-item-size" }, f.size));
-    const actions = el("div", { className: "file-item-actions" });
-    const editBtn = el("button", { className: "btn-file-action", onClick: () => alert("Editing " + f.name) });
-    editBtn.appendChild(iconEl("edit"));
-    editBtn.appendChild(document.createTextNode(" Edit"));
-    const dlBtn = el("button", { className: "btn-file-action", onClick: () => alert("Downloading " + f.name) });
-    dlBtn.appendChild(iconEl("download"));
-    const delBtn = el("button", { className: "btn-file-action danger", onClick: () => { if (confirm("Delete " + f.name + "?")) { state.mcFiles.splice(i, 1); render(); } } });
-    delBtn.appendChild(iconEl("trash"));
-    actions.appendChild(editBtn);
-    actions.appendChild(dlBtn);
-    actions.appendChild(delBtn);
-    item.appendChild(actions);
-    listFrag.appendChild(item);
-  });
-  list.appendChild(listFrag);
-  container.appendChild(list);
+  if (state.mcFiles.length === 0) {
+    const empty = el("div", { style: { background:"#090f09", border:"1px dashed #2a5a2a", borderRadius:"8px", padding:"28px", textAlign:"center" } });
+    empty.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", marginBottom:"4px" } }, "No files uploaded yet."));
+    empty.appendChild(el("div", { style: { fontSize:"11px", fontFamily:"var(--mono)", color:"var(--text-muted)" } }, "Upload a file or create a new one."));
+    container.appendChild(empty);
+  } else {
+    const list = el("div", { className: "files-list" });
+    const lFrag = document.createDocumentFragment();
+    state.mcFiles.forEach((f, i) => {
+      const item = el("div", { className: "file-item" });
+      const icEl = fileIconEl(f.type || "doc");
+      icEl.style.cssText = "width:18px;height:18px;color:var(--mc-bright)";
+      item.appendChild(icEl);
+      item.appendChild(el("span", { className: "file-item-name" }, f.name));
+      item.appendChild(el("span", { className: "file-item-size" }, f.size));
+      const acts = el("div", { className: "file-item-actions" });
+      const dlBtn = el("button", { className: "btn-file-action", onClick: () => alert("Downloading " + f.name) });
+      dlBtn.appendChild(iconEl("download"));
+      const delBtn = el("button", { className: "btn-file-action danger", onClick: () => { if (confirm("Delete " + f.name + "?")) { state.mcFiles.splice(i, 1); render(); } } });
+      delBtn.appendChild(iconEl("trash"));
+      acts.appendChild(dlBtn);
+      acts.appendChild(delBtn);
+      item.appendChild(acts);
+      lFrag.appendChild(item);
+    });
+    list.appendChild(lFrag);
+    container.appendChild(list);
+  }
 
-  const addBtn = el("button", { className: "btn-add-file", onClick: () => { const name = prompt("File name:"); if (name) { state.mcFiles.push({ name, size: "0 KB", type: "doc" }); render(); } } });
+  const addBtn = el("button", { className: "btn-add-file", onClick: () => {
+    const name = prompt("New file name:");
+    if (name && name.trim()) { state.mcFiles.push({ name: name.trim(), size: "0 KB", type: "doc" }); render(); }
+  }});
   addBtn.appendChild(iconEl("plus"));
   addBtn.appendChild(document.createTextNode(" New File"));
   container.appendChild(addBtn);
@@ -767,31 +853,43 @@ function buildMcFiles(container) {
 
 function buildMcMods(container) {
   const topRow = el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"12px", flexWrap:"wrap", gap:"8px" } });
-  const title = el("div", { className: "mc-section-title", style: { marginBottom:"0" } }, "Mods / Plugins");
-  topRow.appendChild(title);
-  const upBtn = el("button", { className: "btn-upload-mod", onClick: () => alert("Upload .jar mod dialog would open here.") });
+  topRow.appendChild(el("div", { className: "mc-section-title", style: { marginBottom:"0" } }, "Mods / Plugins"));
+  const upBtn = el("button", { className: "btn-upload-mod", onClick: () => {
+    const name = prompt("Plugin or mod name:");
+    if (!name || !name.trim()) return;
+    const ver = prompt("Version (e.g. 1.0.0):") || "1.0.0";
+    state.mcMods.push({ name: name.trim(), ver: ver.trim(), active: true });
+    render();
+  }});
   upBtn.appendChild(iconEl("upload"));
   upBtn.appendChild(document.createTextNode(" Upload Mod"));
   topRow.appendChild(upBtn);
   container.appendChild(topRow);
 
-  const grid = el("div", { className: "mods-grid" });
-  const modFrag = document.createDocumentFragment();
-  state.mcMods.forEach((m, i) => {
-    const card = el("div", { className: "mod-card" });
-    card.appendChild(el("div", { className: "mod-card-name" }, m.name));
-    card.appendChild(el("div", { className: "mod-card-ver" }, "v" + m.ver));
-    const mbot = el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"8px" } });
-    mbot.appendChild(el("span", { className: "mod-card-status " + (m.active ? "active" : "inactive") }, m.active ? "Active" : "Inactive"));
-    const toggleBtn = el("button", { style: { background:"transparent", color:"var(--text-muted)", border:"none", fontSize:"11px", cursor:"pointer", fontWeight:"700", fontFamily:"var(--font)" }, onClick: () => { state.mcMods[i].active = !state.mcMods[i].active; scheduleRender(); } }, "Toggle");
-    mbot.appendChild(toggleBtn);
-    card.appendChild(mbot);
-    modFrag.appendChild(card);
-  });
-  grid.appendChild(modFrag);
-  container.appendChild(grid);
-
-  container.appendChild(el("div", { style: { marginTop:"16px", padding:"14px", background:"#090f09", border:"1px dashed #2a5a2a", borderRadius:"8px", textAlign:"center", color:"var(--text-muted)", fontSize:"12px" } }, "Drop .jar files here or click Upload Mod to add plugins"));
+  if (state.mcMods.length === 0) {
+    const empty = el("div", { style: { background:"#090f09", border:"1px dashed #2a5a2a", borderRadius:"8px", padding:"28px", textAlign:"center" } });
+    empty.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", marginBottom:"4px" } }, "No mods or plugins installed."));
+    empty.appendChild(el("div", { style: { fontSize:"11px", fontFamily:"var(--mono)", color:"var(--text-muted)" } }, "Upload a .jar file to add a plugin or mod."));
+    container.appendChild(empty);
+  } else {
+    const grid = el("div", { className: "mods-grid" });
+    const mFrag = document.createDocumentFragment();
+    state.mcMods.forEach((m, i) => {
+      const card = el("div", { className: "mod-card" });
+      card.appendChild(el("div", { className: "mod-card-name" }, m.name));
+      card.appendChild(el("div", { className: "mod-card-ver" }, "v" + m.ver));
+      const mbot = el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"8px" } });
+      mbot.appendChild(el("span", { className: "mod-card-status " + (m.active ? "active" : "inactive") }, m.active ? "Active" : "Inactive"));
+      const row = el("div", { style: { display:"flex", gap:"6px" } });
+      row.appendChild(el("button", { style: { background:"transparent", color:"var(--text-muted)", border:"none", fontSize:"11px", cursor:"pointer", fontWeight:"700", fontFamily:"var(--font)" }, onClick: () => { state.mcMods[i].active = !state.mcMods[i].active; scheduleRender(); } }, m.active ? "Disable" : "Enable"));
+      row.appendChild(el("button", { style: { background:"transparent", color:"var(--red)", border:"none", fontSize:"11px", cursor:"pointer", fontWeight:"700", fontFamily:"var(--font)" }, onClick: () => { if (confirm("Remove " + m.name + "?")) { state.mcMods.splice(i, 1); render(); } } }, "Remove"));
+      mbot.appendChild(row);
+      card.appendChild(mbot);
+      mFrag.appendChild(card);
+    });
+    grid.appendChild(mFrag);
+    container.appendChild(grid);
+  }
 }
 
 function buildMcConsole(p) {
@@ -803,29 +901,35 @@ function buildMcConsole(p) {
   chip.appendChild(el("div", { className: "status-dot" }));
   chip.appendChild(document.createTextNode(" Running"));
   rightTools.appendChild(chip);
-  const clearBtn = el("button", { className: "btn-clear", onClick: () => { state.mcLogs = []; render(); } }, "Clear");
-  rightTools.appendChild(clearBtn);
+  rightTools.appendChild(el("button", { className: "btn-clear", onClick: () => { state.mcLogs = []; render(); } }, "Clear"));
   toolbar.appendChild(rightTools);
   wrap.appendChild(toolbar);
 
-  const body = el("div", { className: "mc-console-body", style: { flex:"1" } });
-  const logFrag = document.createDocumentFragment();
-  state.mcLogs.forEach(l => {
-    const line = el("div", { className: "log-line" });
-    line.appendChild(el("span", { className: "log-time" }, l.t));
-    line.appendChild(el("span", { className: "mc-log-" + l.type }, l.msg));
-    logFrag.appendChild(line);
-  });
-  body.appendChild(logFrag);
+  const body = el("div", { className: "mc-console-body", id: "mcConsoleBody", style: { flex:"1" } });
+  if (state.mcLogs.length === 0) {
+    body.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"11px", fontFamily:"var(--mono)", paddingTop:"4px" } }, "Console output will appear here..."));
+  } else {
+    const lFrag = document.createDocumentFragment();
+    state.mcLogs.forEach(l => {
+      const line = el("div", { className: "log-line" });
+      line.appendChild(el("span", { className: "log-time" }, l.t));
+      line.appendChild(el("span", { className: "mc-log-" + l.type }, l.msg));
+      lFrag.appendChild(line);
+    });
+    body.appendChild(lFrag);
+  }
   wrap.appendChild(body);
+  requestAnimationFrame(() => {
+    const b = document.getElementById("mcConsoleBody");
+    if (b) b.scrollTop = b.scrollHeight;
+  });
 
   const inputRow = el("div", { className: "mc-console-input-row" });
-  const cmdInput = el("input", { className: "mc-cmd-input", placeholder: "Type a server command... (try: list, say hello, stop)", value: state.mcCmd });
+  const cmdInput = el("input", { className: "mc-cmd-input", placeholder: "Type a command... (try: list, tps, help)", value: state.mcCmd });
   cmdInput.oninput = () => { state.mcCmd = cmdInput.value; };
   cmdInput.onkeydown = (ev) => { if (ev.key === "Enter") sendMcCmd(cmdInput.value); };
-  const sendBtn = el("button", { className: "btn-send-cmd", onClick: () => sendMcCmd(cmdInput.value) }, "Send");
   inputRow.appendChild(cmdInput);
-  inputRow.appendChild(sendBtn);
+  inputRow.appendChild(el("button", { className: "btn-send-cmd", onClick: () => sendMcCmd(cmdInput.value) }, "Send"));
   wrap.appendChild(inputRow);
   return wrap;
 }
@@ -838,21 +942,45 @@ function sendMcCmd(cmd) {
   if (cmd.startsWith("say ")) {
     state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: [CONSOLE] " + cmd.slice(4) });
   } else if (cmd === "list") {
-    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: There are 3 of a max of 20 players online: Notch, jeb_, herobrine" });
+    const names = state.onlinePlayers.length ? state.onlinePlayers.join(", ") : "none";
+    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: There are " + state.onlinePlayers.length + "/20 players online: " + names });
   } else if (cmd === "stop") {
     state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Stopping the server..." });
   } else if (cmd.startsWith("kick ")) {
-    state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Kicked " + cmd.slice(5) + " from the server." });
+    const name = cmd.slice(5).trim();
+    state.onlinePlayers = state.onlinePlayers.filter(n => n !== name);
+    state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Kicked " + name + " from the server." });
+  } else if (cmd.startsWith("ban ")) {
+    state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Banned player " + cmd.slice(4).trim() });
   } else if (cmd === "tps") {
     state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: TPS from last 1m, 5m, 15m: 20.0, 20.0, 20.0" });
   } else if (cmd === "help") {
-    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Available commands: list, say <msg>, stop, kick <player>, tps, time set day, weather clear" });
+    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Commands: list, say <msg>, stop, kick <player>, ban <player>, tps, time set day, weather clear, op <player>, deop <player>, whitelist add <player>, reload" });
   } else if (cmd === "time set day") {
     state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Set the time to 1000" });
+  } else if (cmd === "time set night") {
+    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Set the time to 13000" });
   } else if (cmd === "weather clear") {
     state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Changing to clear weather" });
+  } else if (cmd === "weather rain") {
+    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Changing to rainy weather" });
+  } else if (cmd.startsWith("op ")) {
+    state.mcLogs.push({ t, type: "ok", msg: "[Server thread/INFO]: Made " + cmd.slice(3).trim() + " a server operator" });
+  } else if (cmd.startsWith("deop ")) {
+    state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Made " + cmd.slice(5).trim() + " no longer a server operator" });
+  } else if (cmd.startsWith("whitelist add ")) {
+    state.mcLogs.push({ t, type: "ok", msg: "[Server thread/INFO]: Added " + cmd.slice(14).trim() + " to the whitelist" });
+  } else if (cmd === "whitelist list") {
+    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: There are 0 whitelisted players." });
+  } else if (cmd === "reload") {
+    state.mcLogs.push({ t, type: "server", msg: "[Server thread/INFO]: Reloading server configuration..." });
+    state.mcLogs.push({ t, type: "ok", msg: "[Server thread/INFO]: Reload complete." });
+  } else if (cmd === "difficulty peaceful" || cmd === "difficulty easy" || cmd === "difficulty normal" || cmd === "difficulty hard") {
+    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Difficulty set to " + cmd.split(" ")[1] });
+  } else if (cmd.startsWith("gamemode ")) {
+    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Set gamemode: " + cmd.slice(9) });
   } else {
-    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Command executed: /" + cmd });
+    state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Unknown command: /" + cmd + " (type /help for a list of commands)" });
   }
   trimLogs(state.mcLogs);
   state.mcCmd = "";
