@@ -44,6 +44,29 @@ const state = {
   username: "",
 };
 
+let ws;
+function connectWS() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${location.host}`);
+  ws.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.event === 'log') {
+        const p = state.projects.find(x => x.id == data.projectId);
+        if (!p) return;
+        const tgt = p.type === 'minecraft' ? state.mcLogs : state.botLogs;
+        tgt.push({ t: getTime(), type: data.type, msg: data.msg });
+        trimLogs(tgt);
+        if (state.currentProject && state.currentProject.id == data.projectId) {
+          scheduleRender();
+        }
+      }
+    } catch(err) {}
+  };
+  ws.onclose = () => setTimeout(connectWS, 2000);
+}
+connectWS();
+
 let renderPending = false;
 function scheduleRender() {
   if (renderPending) return;
@@ -80,7 +103,6 @@ function el(tag, attrs, ...children) {
   return node;
 }
 
-// SVG icon helper — no weird font icons
 function svgIcon(type, color) {
   const icons = {
     chart: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>`,
@@ -175,23 +197,6 @@ function renderLoading() {
     state.loading = false;
     state.page = state.newType === "minecraft" ? "mc-dashboard" : "bot-dashboard";
     state.showNewModal = false;
-    const t = getTime();
-    if (state.newType !== "minecraft") {
-      state.botLogs = [
-        { t, type: "sys", msg: "[System] Bot container initialized." },
-        { t, type: "info", msg: "[Info] Installing dependencies..." },
-        { t, type: "ok", msg: "[Info] Dependencies ready." },
-        { t, type: "ok", msg: "[Info] Bot process started. Waiting for token to connect..." },
-      ];
-    } else {
-      state.mcLogs = [
-        { t, type: "server", msg: "[Server thread/INFO]: Starting Minecraft server version " + (state.currentProject.version || "1.21.5") },
-        { t, type: "server", msg: "[Server thread/INFO]: Loading properties..." },
-        { t, type: "server", msg: "[Server thread/INFO]: " + (state.currentProject.serverType || "Vanilla") + " server is running." },
-        { t, type: "info", msg: "[Server thread/INFO]: Preparing spawn area..." },
-        { t, type: "info", msg: '[Server thread/INFO]: Done! For help, type "help"' },
-      ];
-    }
     render();
   }, 2200);
   return wrap;
@@ -262,11 +267,11 @@ function renderProjectCard(p) {
   const tags = el("div", { className: "card-tags" });
   tags.appendChild(el("span", { className: "tag" }, isMc ? (p.serverType + " " + p.version) : p.lang));
   tags.appendChild(el("span", { className: "tag " + (p.running ? "running" : "stopped") }, p.running ? "Running" : "Stopped"));
+  if (isMc && p.port) tags.appendChild(el("span", { className: "tag discord-tag" }, "Port: " + p.port));
   card.appendChild(tags);
   const actions = el("div", { className: "card-actions" });
   const manage = el("button", { className: "btn-manage", onClick: () => openProject(p.id) }, "Manage");
-  // Stop/Start icon button on card
-  const stopStartBtn = el("button", { className: "btn-card-toggle " + (p.running ? "running" : "stopped"), onClick: (e) => { e.stopPropagation(); toggleRunningFromCard(p); } });
+  const stopStartBtn = el("button", { className: "btn-card-toggle " + (p.running ? "running" : "stopped"), onClick: (e) => { e.stopPropagation(); toggleRunning(p); } });
   stopStartBtn.appendChild(svgIcon(p.running ? "stop" : "play"));
   const del = el("button", { className: "btn-delete", onClick: () => deleteProject(p.id) }, "Delete");
   actions.appendChild(manage);
@@ -274,14 +279,6 @@ function renderProjectCard(p) {
   actions.appendChild(del);
   card.appendChild(actions);
   return card;
-}
-
-function toggleRunningFromCard(p) {
-  p.running = !p.running;
-  const proj = state.projects.find(x => x.id === p.id);
-  if (proj) proj.running = p.running;
-  saveProjects();
-  render();
 }
 
 function renderModal() {
@@ -378,9 +375,9 @@ function getDefaultFilename(p) {
 }
 
 function getDefaultCode(p) {
-  if (p.lang === "Python") return "import discord\nimport os\n\nintents = discord.Intents.default()\nintents.message_content = True\nclient = discord.Client(intents=intents)\n\n@client.event\nasync def on_ready():\n    print(f'Logged in as {client.user}')\n\n@client.event\nasync def on_message(message):\n    if message.author == client.user:\n        return\n    if message.content.startswith('!ping'):\n        await message.channel.send('Pong!')\n\nclient.run(os.environ['BOT_TOKEN'])\n";
-  if (p.lang === "TypeScript") return "import { Client, GatewayIntentBits } from 'discord.js';\n\nconst client = new Client({\n  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]\n});\n\nclient.once('ready', () => {\n  console.log(`Logged in as ${client.user?.tag}`);\n});\n\nclient.on('messageCreate', message => {\n  if (message.author.bot) return;\n  if (message.content === '!ping') {\n    message.reply('Pong!');\n  }\n});\n\nclient.login(process.env.BOT_TOKEN);\n";
-  return "const { Client, GatewayIntentBits } = require('discord.js');\n\nconst client = new Client({\n  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]\n});\n\nclient.once('ready', () => {\n  console.log(`Logged in as ${client.user.tag}`);\n});\n\nclient.on('messageCreate', message => {\n  if (message.author.bot) return;\n  if (message.content === '!ping') {\n    message.reply('Pong!');\n  }\n});\n\nclient.login(process.env.BOT_TOKEN);\n";
+  if (p.lang === "Python") return "import os\n\nprint('Bot starting...')\n";
+  if (p.lang === "TypeScript") return "console.log('Bot starting...');\n";
+  return "console.log('Bot starting...');\n";
 }
 
 function createProject() {
@@ -427,6 +424,11 @@ function openProject(id) {
   if (p.type === "discord") {
     state.editorFile = getDefaultFilename(p);
     state.codeContent = (p.files && p.files[state.editorFile]) || "";
+  } else {
+    fetch('/api/projects/' + id + '/dir').then(r => r.json()).then(d => {
+      if (d.success) state.mcFiles = d.files;
+      render();
+    });
   }
   render();
 }
@@ -442,28 +444,12 @@ function toggleRunning(p) {
   p.running = !p.running;
   const proj = state.projects.find(x => x.id === p.id);
   if (proj) proj.running = p.running;
-  const t = getTime();
-  if (p.type === "discord") {
-    if (p.running) {
-      state.botLogs.push({ t, type: "sys", msg: "[System] Bot process started." });
-      state.botLogs.push({ t, type: "info", msg: "[Info] Connecting to Discord gateway..." });
-      state.botLogs.push({ t, type: "ok", msg: "[Info] Bot is online and ready." });
-    } else {
-      state.botLogs.push({ t, type: "warn", msg: "[System] Bot process stopped." });
-    }
-    trimLogs(state.botLogs);
+  
+  if (p.running) {
+    fetch(`/api/projects/${p.id}/start`, { method: "POST" }).then(() => render());
   } else {
-    if (p.running) {
-      state.mcLogs.push({ t, type: "server", msg: "[Server thread/INFO]: Starting Minecraft server..." });
-      state.mcLogs.push({ t, type: "server", msg: "[Server thread/INFO]: Loading " + (p.serverType || "Vanilla") + " " + (p.version || "1.21.5") });
-      state.mcLogs.push({ t, type: "info", msg: '[Server thread/INFO]: Done! For help, type "help"' });
-    } else {
-      state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Stopping the server..." });
-      state.mcLogs.push({ t, type: "server", msg: "[Server thread/INFO]: Server stopped." });
-    }
-    trimLogs(state.mcLogs);
+    fetch(`/api/projects/${p.id}/stop`, { method: "POST" }).then(() => render());
   }
-  saveProjects();
   render();
 }
 
@@ -473,7 +459,14 @@ function flashSaveBtn(btn, orig) {
   setTimeout(() => { btn.textContent = "Save"; btn.style.color = ""; }, 1400);
 }
 
-// ========== BOT DASHBOARD ==========
+function installPkg() {
+  const input = document.getElementById("pkgInput");
+  const v = input ? input.value.trim() : "";
+  if (!v || !ws || !state.currentProject) return;
+  ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: v }));
+  if (input) input.value = "";
+}
+
 function renderBotDashboard() {
   const p = state.currentProject || {};
   const frag = document.createDocumentFragment();
@@ -507,7 +500,6 @@ function renderBotDashboard() {
   const dash = el("div", { className: "dashboard discord-dash" });
   const sb = el("div", { className: "sidebar discord-sidebar" });
 
-  // Wave background for discord sidebar
   const waveBg = el("div", { className: "discord-wave-bg" });
   sb.appendChild(waveBg);
 
@@ -518,11 +510,8 @@ function renderBotDashboard() {
   filesSection.appendChild(filesLbl);
 
   const mainFile = getDefaultFilename(p);
-  // Get all files from project
   const projectFiles = Object.keys((p.files && typeof p.files === 'object') ? p.files : {});
   if (!projectFiles.includes(mainFile)) projectFiles.unshift(mainFile);
-  const extraFiles = ["requirements." + (p.lang === "Python" ? "txt" : "json"), "config.json"];
-  extraFiles.forEach(f => { if (!projectFiles.includes(f)) projectFiles.push(f); });
 
   projectFiles.forEach(fname => {
     const isActive = state.editorFile === fname || (!state.editorFile && fname === mainFile);
@@ -533,7 +522,6 @@ function renderBotDashboard() {
     filesSection.appendChild(row);
   });
 
-  // Add new file button
   const addFileBtn = el("button", { className: "btn-add-file-small", onClick: () => {
     const name = prompt("New file name (e.g. utils.py):");
     if (name && name.trim()) {
@@ -587,19 +575,6 @@ function renderBotDashboard() {
   tRow.appendChild(tSaveBtn);
   tokenField.appendChild(tRow);
   settingsSection.appendChild(tokenField);
-
-  const autoField = el("div", { className: "settings-field", style: { display:"flex", alignItems:"center", gap:"8px" } });
-  const autoCheck = el("input", { type: "checkbox", id: "autoRestart", style: { accentColor:"#5865f2" } });
-  if (p.autoRestart) autoCheck.checked = true;
-  autoCheck.onchange = () => {
-    p.autoRestart = autoCheck.checked;
-    const proj = state.projects.find(x => x.id === p.id);
-    if (proj) proj.autoRestart = p.autoRestart;
-    saveProjects();
-  };
-  autoField.appendChild(autoCheck);
-  autoField.appendChild(el("label", { htmlFor: "autoRestart", style: { fontSize:"12px", color:"var(--text-dim)" } }, "Auto-restart on crash"));
-  settingsSection.appendChild(autoField);
   sb.appendChild(settingsSection);
   dash.appendChild(sb);
 
@@ -612,10 +587,6 @@ function renderBotDashboard() {
   saveFileBtn.addEventListener("click", () => {
     saveCurrentFile();
     flashSaveBtn(saveFileBtn);
-    const t = getTime();
-    state.botLogs.push({ t, type: "sys", msg: "[System] File " + (state.editorFile || mainFile) + " saved." });
-    trimLogs(state.botLogs);
-    scrollConsolesToBottom();
   });
   toolbar.appendChild(saveFileBtn);
   main.appendChild(toolbar);
@@ -654,23 +625,6 @@ function buildConsole() {
   return panel;
 }
 
-function installPkg() {
-  const input = document.getElementById("pkgInput");
-  const v = input ? input.value.trim() : "";
-  if (!v) return;
-  if (input) input.value = "";
-  const t = getTime();
-  state.botLogs.push({ t, type: "info", msg: "[PKG] Installing " + v + "..." });
-  trimLogs(state.botLogs);
-  render();
-  setTimeout(() => {
-    state.botLogs.push({ t: getTime(), type: "ok", msg: "[PKGDONE] " + v + " installed successfully." });
-    trimLogs(state.botLogs);
-    render();
-  }, 1200);
-}
-
-// ========== MC DASHBOARD ==========
 function renderMcDashboard() {
   const p = state.currentProject || {};
   const frag = document.createDocumentFragment();
@@ -684,7 +638,7 @@ function renderMcDashboard() {
 
   const dtags = el("div", { className: "dash-tags" });
   const chip = el("div", { className: "status-chip" + (p.running ? "" : " stopped") });
-  chip.appendChild(el("div", { className: "status-dot" + (p.running ? "" : " stopped") }));
+  chip.appendChild(el("div", { className: "status-dot" + (p.running ? "" : " stopped") });
   chip.appendChild(document.createTextNode(p.running ? " Running" : " Stopped"));
   dtags.appendChild(chip);
   const toggleBtn = el("button", { className: p.running ? "btn-stop" : "btn-start", onClick: () => toggleRunning(p) });
@@ -699,7 +653,7 @@ function renderMcDashboard() {
 
   const hdr = el("div", { className: "mc-header-section" });
   hdr.appendChild(el("div", { className: "mc-server-name" }, p.name || "Minecraft Server"));
-  hdr.appendChild(el("div", { className: "mc-server-ip" }, p.ip || "play.server.net"));
+  hdr.appendChild(el("div", { className: "mc-server-ip" }, (p.ip || "play.server.net") + (p.port ? `:${p.port}` : '')));
   const vtag = el("span", { className: "mc-version-tag" });
   vtag.appendChild(svgIcon("pickaxe"));
   vtag.appendChild(document.createTextNode(" " + (p.serverType || "Vanilla") + " " + (p.version || "1.21.5")));
@@ -725,47 +679,15 @@ function renderMcDashboard() {
   const qa = el("div", { style: { padding:"14px", marginTop:"auto", borderTop:"1px solid #162016" } });
   qa.appendChild(el("div", { style: { fontSize:"10px", color:"var(--text-muted)", marginBottom:"8px", fontWeight:"700", textTransform:"uppercase", letterSpacing:".08em" } }, "Quick Actions"));
 
-  const restartBtn = el("button", { className: "mc-quick-btn", onClick: () => {
-    if (!p.running) {
-      const t = getTime();
-      state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Server is not running. Start it first." });
-      state.mcView = "console"; scheduleRender(); return;
-    }
-    const t = getTime();
-    state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Restarting server..." });
-    state.mcLogs.push({ t, type: "server", msg: "[Server thread/INFO]: Stopping server..." });
-    setTimeout(() => {
-      const t2 = getTime();
-      state.mcLogs.push({ t: t2, type: "server", msg: "[Server thread/INFO]: Starting " + (p.serverType || "Vanilla") + " " + (p.version || "1.21.5") + "..." });
-      state.mcLogs.push({ t: t2, type: "info", msg: '[Server thread/INFO]: Done! For help, type "help"' });
-      trimLogs(state.mcLogs);
-      state.mcView = "console"; render();
-    }, 1000);
-    trimLogs(state.mcLogs);
-    state.mcView = "console"; scheduleRender();
-  }});
-  restartBtn.appendChild(svgIcon("refresh"));
-  restartBtn.appendChild(document.createTextNode(" Restart Server"));
-
   const backupQuickBtn = el("button", { className: "mc-quick-btn secondary", onClick: () => {
-    const ts = new Date().toLocaleString();
-    const backup = { id: Date.now(), label: "World Backup — " + ts, ts };
-    state.mcBackups.unshift(backup);
-    const proj = state.projects.find(x => x.id === p.id);
-    if (proj) proj._mcBackups = state.mcBackups;
-    saveProjects();
-    const t = getTime();
-    state.mcLogs.push({ t, type: "ok", msg: "[Backup] World backup created: " + ts });
-    trimLogs(state.mcLogs);
-    if (state.mcView === "console") scheduleRender();
-    else { state.mcView = "backups"; scheduleRender(); }
+    if(!state.currentProject) return;
+    fetch('/api/projects/' + state.currentProject.id + '/backup', { method: 'POST' }).then(()=>render());
   }});
   backupQuickBtn.appendChild(svgIcon("backup"));
   backupQuickBtn.appendChild(document.createTextNode(" Backup World"));
-
-  qa.appendChild(restartBtn);
   qa.appendChild(backupQuickBtn);
   sb.appendChild(qa);
+
   dash.appendChild(sb);
 
   const main = el("div", { className: "mc-main" });
@@ -789,12 +711,10 @@ function renderMcDashboard() {
 
 function buildMcOverview(container, p) {
   const stats = [
-    { label: "Status",  html: '<span style="font-size:16px;color:var(--green);font-weight:800">' + (p.running ? "Online" : "Offline") + '</span>', sub: p.running ? "24/7 Uptime" : "Server stopped" },
+    { label: "Status",  html: '<span style="font-size:16px;color:var(--green);font-weight:800">' + (p.running ? "Online" : "Offline") + '</span>', sub: p.running ? "Active" : "Server stopped" },
     { label: "Players", html: '0<span style="font-size:14px;color:var(--text-muted)">/20</span>', sub: "Online now" },
     { label: "Version", html: '<span style="font-size:16px">' + (p.version || "1.21.5") + '</span>', sub: (p.serverType || "Vanilla") + " Edition" },
-    { label: "RAM",     html: '0<span style="font-size:14px;color:var(--text-muted)">MB</span>', sub: "Used" },
-    { label: "TPS",     html: "20", sub: "Ticks/sec" },
-    { label: "Uptime",  html: '<span style="font-size:16px">0m</span>', sub: "Since start" },
+    { label: "Port",    html: '<span style="font-size:16px">' + (p.port || "25565") + '</span>', sub: "Server Port" },
   ];
   const grid = el("div", { className: "mc-stats-grid" });
   stats.forEach(s => {
@@ -809,15 +729,14 @@ function buildMcOverview(container, p) {
   container.appendChild(grid);
   container.appendChild(el("div", { className: "mc-section-title" }, "Server IP"));
   const ipRow = el("div", { style: { background:"#090f09", border:"1px solid #162016", borderRadius:"8px", padding:"14px", marginBottom:"20px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:"8px" } });
-  const ipText = el("span", { style: { fontFamily:"var(--mono)", color:"var(--mc-bright)", fontSize:"15px", fontWeight:"600" } }, p.ip || "play.myserver.net");
-  const copyBtn = el("button", { style: { background:"#1c381c", color:"var(--mc-bright)", border:"1px solid #2a5a2a", padding:"6px 13px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => { if (navigator.clipboard) navigator.clipboard.writeText(p.ip || "play.myserver.net"); copyBtn.lastChild.textContent = "Copied!"; setTimeout(() => { copyBtn.lastChild.textContent = "Copy IP"; }, 1400); } });
+  const combinedIp = (p.ip || "play.myserver.net") + (p.port ? `:${p.port}` : "");
+  const ipText = el("span", { style: { fontFamily:"var(--mono)", color:"var(--mc-bright)", fontSize:"15px", fontWeight:"600" } }, combinedIp);
+  const copyBtn = el("button", { style: { background:"#1c381c", color:"var(--mc-bright)", border:"1px solid #2a5a2a", padding:"6px 13px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", fontFamily:"var(--font)" }, onClick: () => { if (navigator.clipboard) navigator.clipboard.writeText(combinedIp); copyBtn.lastChild.textContent = "Copied!"; setTimeout(() => { copyBtn.lastChild.textContent = "Copy IP"; }, 1400); } });
   copyBtn.appendChild(svgIcon("copy"));
   copyBtn.appendChild(document.createTextNode("Copy IP"));
   ipRow.appendChild(ipText);
   ipRow.appendChild(copyBtn);
   container.appendChild(ipRow);
-  container.appendChild(el("div", { className: "mc-section-title" }, "Online Players"));
-  container.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"14px", background:"#090f09", border:"1px solid #162016", borderRadius:"8px" } }, "No players online."));
 }
 
 function buildMcFiles(container, p) {
@@ -829,18 +748,14 @@ function buildMcFiles(container, p) {
     input.onchange = (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      const size = file.size < 1024 ? file.size + " B" : file.size < 1048576 ? (file.size/1024).toFixed(1) + " KB" : (file.size/1048576).toFixed(1) + " MB";
-      // Actually read file content if text
-      const reader = new FileReader();
-      reader.onload = (re) => {
-        const content = typeof re.target.result === "string" ? re.target.result : "";
-        state.mcFiles.push({ name: file.name, size, type: "doc", content });
-        const proj = state.projects.find(x => x.id === (p && p.id));
-        if (proj) proj._mcFiles = state.mcFiles;
-        saveProjects();
-        render();
-      };
-      reader.readAsText(file);
+      const fd = new FormData();
+      fd.append('file', file);
+      fetch('/api/projects/' + p.id + '/upload', { method: 'POST', body: fd }).then(() => {
+        fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => {
+          if (d.success) state.mcFiles = d.files;
+          render();
+        });
+      });
     };
     input.click();
   }});
@@ -850,24 +765,25 @@ function buildMcFiles(container, p) {
   container.appendChild(topRow);
 
   const list = el("div", { className: "files-list" });
-  if (state.mcFiles.length === 0) {
-    list.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"14px" } }, "No files yet. Upload files to get started."));
+  if (!state.mcFiles || state.mcFiles.length === 0) {
+    list.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"14px" } }, "No files yet."));
   }
-  state.mcFiles.forEach((f, i) => {
+  (state.mcFiles || []).forEach((f) => {
     const item = el("div", { className: "file-item" });
-    const icEl = svgIcon("doc");
+    const icEl = svgIcon(f.isDir ? "folder" : "doc");
     icEl.style.cssText = "color:var(--mc-bright)";
     item.appendChild(icEl);
     item.appendChild(el("span", { className: "file-item-name" }, f.name));
-    item.appendChild(el("span", { className: "file-item-size" }, f.size));
+    item.appendChild(el("span", { className: "file-item-size" }, f.size + " B"));
     const actions = el("div", { className: "file-item-actions" });
     const delBtn = el("button", { className: "btn-file-action danger", onClick: () => {
       if (confirm("Delete " + f.name + "?")) {
-        state.mcFiles.splice(i, 1);
-        const proj = state.projects.find(x => x.id === (p && p.id));
-        if (proj) proj._mcFiles = state.mcFiles;
-        saveProjects();
-        render();
+        fetch('/api/projects/' + p.id + '/deleteFile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: f.name}) }).then(() => {
+          fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => {
+            if (d.success) state.mcFiles = d.files;
+            render();
+          });
+        });
       }
     }});
     delBtn.appendChild(svgIcon("trash"));
@@ -880,11 +796,12 @@ function buildMcFiles(container, p) {
   const addBtn = el("button", { className: "btn-add-file", onClick: () => {
     const name = prompt("File name:");
     if (name && name.trim()) {
-      state.mcFiles.push({ name: name.trim(), size: "0 KB", type: "doc", content: "" });
-      const proj = state.projects.find(x => x.id === (p && p.id));
-      if (proj) proj._mcFiles = state.mcFiles;
-      saveProjects();
-      render();
+      fetch('/api/projects/' + p.id + '/touch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: name.trim()}) }).then(() => {
+        fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => {
+          if (d.success) state.mcFiles = d.files;
+          render();
+        });
+      });
     }
   }});
   addBtn.appendChild(svgIcon("plus"));
@@ -895,41 +812,10 @@ function buildMcFiles(container, p) {
 function buildMcMods(container) {
   const topRow = el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"12px", flexWrap:"wrap", gap:"8px" } });
   topRow.appendChild(el("div", { className: "mc-section-title", style: { marginBottom:"0" } }, "Mods / Plugins"));
-  const upBtn = el("button", { className: "btn-upload-mod", onClick: () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".jar";
-    input.onchange = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      state.mcMods.push({ name: file.name.replace(".jar", ""), ver: "1.0.0", active: true });
-      const proj = state.projects.find(x => x.id === (state.currentProject && state.currentProject.id));
-      if (proj) proj._mcMods = state.mcMods;
-      saveProjects();
-      render();
-    };
-    input.click();
-  }});
-  upBtn.appendChild(svgIcon("upload"));
-  upBtn.appendChild(document.createTextNode(" Upload Mod"));
-  topRow.appendChild(upBtn);
   container.appendChild(topRow);
   const grid = el("div", { className: "mods-grid" });
-  if (state.mcMods.length === 0) {
-    grid.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"14px" } }, "No mods installed yet."));
-  }
-  state.mcMods.forEach((m, i) => {
-    const card = el("div", { className: "mod-card" });
-    card.appendChild(el("div", { className: "mod-card-name" }, m.name));
-    card.appendChild(el("div", { className: "mod-card-ver" }, "v" + m.ver));
-    const mbot = el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:"8px" } });
-    mbot.appendChild(el("span", { className: "mod-card-status " + (m.active ? "active" : "inactive") }, m.active ? "Active" : "Inactive"));
-    mbot.appendChild(el("button", { style: { background:"transparent", color:"var(--text-muted)", border:"none", fontSize:"11px", cursor:"pointer", fontWeight:"700", fontFamily:"var(--font)" }, onClick: () => { state.mcMods[i].active = !state.mcMods[i].active; scheduleRender(); } }, "Toggle"));
-    card.appendChild(mbot);
-    grid.appendChild(card);
-  });
+  grid.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"14px" } }, "To install mods or plugins, upload them in the Files tab to the mods or plugins directory."));
   container.appendChild(grid);
-  container.appendChild(el("div", { style: { marginTop:"16px", padding:"14px", background:"#090f09", border:"1px dashed #2a5a2a", borderRadius:"8px", textAlign:"center", color:"var(--text-muted)", fontSize:"12px" } }, "Drop .jar files here or click Upload Mod to add plugins"));
 }
 
 function buildMcConsole(p) {
@@ -938,7 +824,7 @@ function buildMcConsole(p) {
   toolbar.appendChild(el("span", { style: { fontSize:"10px", fontWeight:"800", color:"var(--mc-bright)", textTransform:"uppercase", letterSpacing:".1em" } }, "Console"));
   const rightTools = el("div", { style: { display:"flex", gap:"8px", alignItems:"center" } });
   const chip = el("div", { className: "status-chip" + (p.running ? "" : " stopped") });
-  chip.appendChild(el("div", { className: "status-dot" + (p.running ? "" : " stopped") }));
+  chip.appendChild(el("div", { className: "status-dot" + (p.running ? "" : " stopped") });
   chip.appendChild(document.createTextNode(p.running ? " Running" : " Stopped"));
   rightTools.appendChild(chip);
   rightTools.appendChild(el("button", { className: "btn-clear", onClick: () => { state.mcLogs = []; render(); } }, "Clear"));
@@ -967,51 +853,29 @@ function buildMcConsole(p) {
 
 function sendMcCmd(cmd) {
   cmd = (cmd || "").trim();
-  if (!cmd) return;
-  const t = getTime();
-  state.mcLogs.push({ t, type: "server", msg: "[Console] /" + cmd });
-  if (cmd.startsWith("say ")) state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: [CONSOLE] " + cmd.slice(4) });
-  else if (cmd === "list") state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: There are 0 of a max of 20 players online." });
-  else if (cmd === "stop") { state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Stopping the server..." }); if (state.currentProject) { state.currentProject.running = false; const proj = state.projects.find(x => x.id === state.currentProject.id); if (proj) proj.running = false; saveProjects(); } }
-  else if (cmd === "tps") state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: TPS from last 1m, 5m, 15m: 20.0, 20.0, 20.0" });
-  else if (cmd === "help") state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Available commands: list, say <msg>, stop, kick <player>, tps, time set day, weather clear" });
-  else if (cmd.startsWith("kick ")) state.mcLogs.push({ t, type: "warn", msg: "[Server thread/INFO]: Kicked " + cmd.slice(5) + " from the game." });
-  else if (cmd === "time set day") state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Set the time to 1000." });
-  else if (cmd === "weather clear") state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Changing to clear weather." });
-  else state.mcLogs.push({ t, type: "info", msg: "[Server thread/INFO]: Command executed: /" + cmd });
-  trimLogs(state.mcLogs);
+  if (!cmd || !ws || !state.currentProject) return;
+  ws.send(JSON.stringify({ event: 'cmd', projectId: state.currentProject.id, cmd }));
   state.mcCmd = "";
   render();
 }
 
 function buildMcBackups(container, p) {
   container.appendChild(el("div", { className: "mc-section-title" }, "Backup Worlds"));
-  const desc = el("div", { style: { color:"var(--text-muted)", fontSize:"12px", marginBottom:"16px", lineHeight:"1.6" } });
-  desc.textContent = "Create backups of your world. Click a backup to restore it — the server will restart automatically.";
-  container.appendChild(desc);
-
   const createBtn = el("button", { className: "btn-upload-mod", style: { marginBottom:"16px" }, onClick: () => {
-    const ts = new Date().toLocaleString();
-    const backup = { id: Date.now(), label: "World Backup — " + ts, ts };
-    state.mcBackups.unshift(backup);
-    const proj = state.projects.find(x => x.id === (p && p.id));
-    if (proj) { proj._mcBackups = state.mcBackups; }
-    saveProjects();
-    const t = getTime();
-    state.mcLogs.push({ t, type: "ok", msg: "[Backup] World backup created: " + ts });
-    scheduleRender();
+    if(!state.currentProject) return;
+    fetch('/api/projects/' + state.currentProject.id + '/backup', { method: 'POST' }).then(()=>render());
   }});
   createBtn.appendChild(svgIcon("backup"));
   createBtn.appendChild(document.createTextNode(" Create Backup Now"));
   container.appendChild(createBtn);
 
-  if (state.mcBackups.length === 0) {
+  if (!p._mcBackups || p._mcBackups.length === 0) {
     container.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"16px", background:"#090f09", border:"1px solid #162016", borderRadius:"8px", textAlign:"center" } }, "No backups yet. Click the button above to create your first backup."));
     return;
   }
 
   const list = el("div", { className: "backups-list" });
-  state.mcBackups.forEach((b, i) => {
+  p._mcBackups.forEach((b) => {
     const row = el("div", { className: "backup-row" });
     const left = el("div", { className: "backup-left" });
     left.appendChild(svgIcon("backup"));
@@ -1023,50 +887,11 @@ function buildMcBackups(container, p) {
 
     const revertBtn = el("button", { className: "btn-revert", onClick: () => {
       if (!confirm("Revert to this backup? The server will restart.")) return;
-      const t = getTime();
-      // Stop server if running
-      if (state.currentProject && state.currentProject.running) {
-        state.currentProject.running = false;
-        const proj = state.projects.find(x => x.id === state.currentProject.id);
-        if (proj) proj.running = false;
-      }
-      state.mcLogs.push({ t, type: "warn", msg: "[Backup] Reverting to backup: " + b.ts });
-      state.mcLogs.push({ t, type: "server", msg: "[Server thread/INFO]: Stopping server for world revert..." });
-      saveProjects();
-      state.mcView = "console";
-      render();
-      setTimeout(() => {
-        const t2 = getTime();
-        state.mcLogs.push({ t: t2, type: "ok", msg: "[Backup] World restored from backup: " + b.ts });
-        state.mcLogs.push({ t: t2, type: "server", msg: "[Server thread/INFO]: Restarting server with restored world..." });
-        if (state.currentProject) state.currentProject.running = true;
-        const proj = state.projects.find(x => x.id === (state.currentProject && state.currentProject.id));
-        if (proj) proj.running = true;
-        saveProjects();
-        setTimeout(() => {
-          const t3 = getTime();
-          state.mcLogs.push({ t: t3, type: "server", msg: "[Server thread/INFO]: Starting " + (p.serverType || "Vanilla") + " " + (p.version || "1.21.5") + "..." });
-          state.mcLogs.push({ t: t3, type: "info", msg: '[Server thread/INFO]: Done! World restored successfully.' });
-          trimLogs(state.mcLogs);
-          render();
-        }, 1500);
-      }, 1200);
+      fetch('/api/projects/' + p.id + '/revert', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({dir: b.dir}) }).then(()=>render());
     }});
     revertBtn.appendChild(svgIcon("revert"));
     revertBtn.appendChild(document.createTextNode(" Revert to this backup"));
     row.appendChild(revertBtn);
-
-    const delBtn = el("button", { className: "btn-file-action danger", style: { marginLeft:"8px" }, onClick: () => {
-      if (confirm("Delete this backup?")) {
-        state.mcBackups.splice(i, 1);
-        const proj = state.projects.find(x => x.id === (p && p.id));
-        if (proj) proj._mcBackups = state.mcBackups;
-        saveProjects();
-        render();
-      }
-    }});
-    delBtn.appendChild(svgIcon("trash"));
-    row.appendChild(delBtn);
     list.appendChild(row);
   });
   container.appendChild(list);
@@ -1074,31 +899,25 @@ function buildMcBackups(container, p) {
 
 function buildMcAbout(container, p) {
   container.appendChild(el("div", { className: "mc-section-title" }, "Server About"));
-  container.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", marginBottom:"16px" } }, "Write a description for your server. Choose a font style for your description."));
-
-  // Font selector
   const fontRow = el("div", { style: { display:"flex", gap:"8px", flexWrap:"wrap", marginBottom:"12px", alignItems:"center" } });
   fontRow.appendChild(el("span", { style: { fontSize:"11px", color:"var(--text-muted)", fontWeight:"700", textTransform:"uppercase", letterSpacing:".06em" } }, "Font:"));
   FONTS.forEach(f => {
     const btn = el("button", { className: "font-btn" + ((p.serverAboutFont || "") === f.value ? " active" : ""), style: { fontFamily: f.value || "inherit" }, onClick: () => {
       p.serverAboutFont = f.value;
-      const proj = state.projects.find(x => x.id === p.id);
-      if (proj) proj.serverAboutFont = f.value;
+      saveProjects();
       scheduleRender();
     }}, f.label);
     fontRow.appendChild(btn);
   });
   container.appendChild(fontRow);
 
-  const ta = el("textarea", { className: "about-editor", placeholder: "Write your server description here... (supports plain text)", style: { fontFamily: p.serverAboutFont || "inherit" } });
+  const ta = el("textarea", { className: "about-editor", placeholder: "Write your server description here...", style: { fontFamily: p.serverAboutFont || "inherit" } });
   ta.value = p.serverAbout || "";
   ta.oninput = () => { p.serverAbout = ta.value; preview.style.fontFamily = p.serverAboutFont || "inherit"; preview.textContent = ta.value || "Your description will appear here..."; };
   container.appendChild(ta);
 
   const saveBtn = el("button", { className: "btn-upload-mod", style: { marginTop:"10px", marginBottom:"16px" }, onClick: () => {
     p.serverAbout = ta.value;
-    const proj = state.projects.find(x => x.id === p.id);
-    if (proj) { proj.serverAbout = p.serverAbout; proj.serverAboutFont = p.serverAboutFont; }
     saveProjects();
     saveBtn.textContent = "Saved!";
     setTimeout(() => { saveBtn.innerHTML = ""; saveBtn.appendChild(svgIcon("save")); saveBtn.appendChild(document.createTextNode(" Save Description")); }, 1400);
