@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — Reboot Cord</title>
+    <link rel="stylesheet" href="/dashboard.css">
+</head>
+<body>
+    <nav class="topbar">
+        <div class="brand">
+            <span class="brand-dot"></span>
+            Reboot<span>Cord</span>
+        </div>
+        <div class="user-area">
+            <span id="nav-username"></span>
+            <button onclick="logout()">Logout</button>
+        </div>
+    </nav>
+
+    <main class="main">
+        <div class="page-header">
+            <div>
+                <h2>Your Projects</h2>
+                <p>Manage and monitor your Discord bot projects</p>
+            </div>
+            <button class="btn-create" onclick="openModal()">+ New Project</button>
+        </div>
+
+        <div id="servers-grid" class="servers-grid">
+            <div class="empty-state" id="empty-state">
+                <p>No projects yet. Create one to get started.</p>
+            </div>
+        </div>
+    </main>
+
+    <div id="modal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <div id="step1">
+                <h3>New Bot Project</h3>
+                <input id="proj-name" type="text" placeholder="Project name (e.g. my-bot)">
+                <p class="field-label">Language</p>
+                <div class="lang-grid">
+                    <button class="lang-btn" data-lang="js" onclick="pickLang(this)">JavaScript</button>
+                    <button class="lang-btn" data-lang="py" onclick="pickLang(this)">Python</button>
+                    <button class="lang-btn" data-lang="lua" onclick="pickLang(this)">Lua</button>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+                    <button class="btn-submit" id="btn-create" onclick="createProject()">Create</button>
+                </div>
+                <p id="create-msg" class="msg"></p>
+            </div>
+            <div id="step2" class="hidden">
+                <h3 id="progress-title">Setting up...</h3>
+                <div class="progress-track">
+                    <div class="progress-bar" id="prog-bar"></div>
+                </div>
+                <p class="progress-pct" id="prog-pct">0%</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/dashboard.js"></script>
+</body>
+</html>
