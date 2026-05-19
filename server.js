@@ -1,18 +1,33 @@
 const express = require('express');
+const http = require('http');
+const WebSocket = require('ws');
 const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
+const cp = require('child_process');
+const axios = require('axios');
+const multer = require('multer');
+
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+const upload = multer({ dest: 'uploads/' });
 
 const DB_FILE = path.join(__dirname, 'db.json');
-const SECRET = process.env.SESSION_SECRET || 'rebootcord-secret-key-change-in-prod';
+const PROJECTS_DIR = path.join(__dirname, 'projects_data');
+const SECRET = process.env.SESSION_SECRET || 'rebootcord-secret-key';
+
+if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 
 function loadDB() {
   try { if (fs.existsSync(DB_FILE)) return JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch(e) {}
-  return { users: [], inviteCodes: {}, blacklisted: [] };
+  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: 25565 };
 }
 function saveDB() { try { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); } catch(e) {} }
 let db = loadDB();
+
+const procs = {};
+const wsClients = new Set();
 
 function signToken(username) {
   const payload = Buffer.from(JSON.stringify({ u: username, t: Date.now() })).toString('base64');
@@ -44,7 +59,48 @@ function clearCookie(res) {
   res.setHeader('Set-Cookie', 'rc_tok=; HttpOnly; Path=/; Max-Age=0');
 }
 
-app.use(express.json());
+function broadcastLog(username, projectId, msg, type = 'info') {
+  const payload = JSON.stringify({ event: 'log', projectId, msg, type });
+  for (const client of wsClients) {
+    if (client.username === username && client.readyState === WebSocket.OPEN) {
+      client.send(payload);
+    }
+  }
+}
+
+wss.on('connection', (ws, req) => {
+  const token = parseCookies(req)['rc_tok'];
+  const user = verifyToken(token);
+  if (!user) return ws.close();
+  ws.username = user;
+  wsClients.add(ws);
+  ws.on('message', (msg) => {
+    try {
+      const data = JSON.parse(msg);
+      if (data.event === 'cmd' && data.projectId && procs[data.projectId]) {
+        procs[data.projectId].stdin.write(data.cmd + '\n');
+      }
+      if (data.event === 'install' && data.projectId) {
+        const p = db.users.find(u => u.username === user).projects.find(x => x.id === data.projectId);
+        if (p) {
+          const pDir = path.join(PROJECTS_DIR, String(p.id));
+          if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+          const cmd = p.lang === 'Python' ? `pip install ${data.pkg}` : `npm install ${data.pkg}`;
+          broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
+          cp.exec(cmd, { cwd: pDir }, (err, stdout, stderr) => {
+            if (stdout) broadcastLog(user, p.id, stdout, 'info');
+            if (stderr) broadcastLog(user, p.id, stderr, 'warn');
+            if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
+            else broadcastLog(user, p.id, `[PKG] Installed ${data.pkg}`, 'ok');
+          });
+        }
+      }
+    } catch (e) {}
+  });
+  ws.on('close', () => wsClients.delete(ws));
+});
+
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(__dirname, { index: false }));
 
 app.get('/', (req, res) => {
@@ -77,7 +133,7 @@ app.post('/login', (req, res) => {
     setCookie(res, signToken(username));
     res.json({ success: true, username });
   } else {
-    res.json({ success: false, message: 'Invalid credentials or blacklisted' });
+    res.json({ success: false, message: 'Invalid credentials' });
   }
 });
 
@@ -105,25 +161,218 @@ app.post('/api/projects', (req, res) => {
   const user = db.users.find(x => x.username === u);
   if (!user) return res.json({ success: false });
   user.projects = req.body.projects || [];
+  db.mcPorts = db.mcPorts || 25565;
+  user.projects.forEach(p => {
+    if (p.type === 'minecraft' && !p.port) {
+      p.port = db.mcPorts++;
+    }
+    const pDir = path.join(PROJECTS_DIR, String(p.id));
+    if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+    if (p.files) {
+      for (const [fname, content] of Object.entries(p.files)) {
+        fs.writeFileSync(path.join(pDir, fname), content);
+      }
+    }
+  });
   saveDB();
   res.json({ success: true });
 });
 
-app.get('/api/stats', (req, res) => {
-  res.json({ activeUsers: db.users.length, totalInvites: Object.keys(db.inviteCodes).length });
+app.get('/api/projects/:id/dir', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false, files: [] });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false, files: [] });
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  let files = [];
+  try {
+    if (fs.existsSync(pDir)) {
+      files = fs.readdirSync(pDir).map(f => {
+        const stat = fs.statSync(path.join(pDir, f));
+        return { name: f, size: stat.size, isDir: stat.isDirectory() };
+      });
+    }
+  } catch(e) {}
+  res.json({ success: true, files });
 });
 
-app.post('/api/blacklist', (req, res) => {
-  const { key } = req.body;
-  if (key && !db.blacklisted.includes(key)) { db.blacklisted.push(key); saveDB(); }
+app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (p && req.file) {
+    const pDir = path.join(PROJECTS_DIR, String(p.id));
+    if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+    fs.renameSync(req.file.path, path.join(pDir, req.file.originalname));
+    broadcastLog(u, p.id, '[System] Uploaded ' + req.file.originalname, 'info');
+  }
   res.json({ success: true });
 });
 
-app.post('/api/createcode', (req, res) => {
-  const { code } = req.body;
-  if (code) { db.inviteCodes[code] = true; saveDB(); }
+app.post('/api/projects/:id/deleteFile', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (p && req.body.name) {
+    const target = path.join(PROJECTS_DIR, String(p.id), req.body.name);
+    try {
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { recursive: true, force: true });
+        broadcastLog(u, p.id, '[System] Deleted ' + req.body.name, 'warn');
+      }
+    } catch(e) {}
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/projects/:id/touch', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (p && req.body.name) {
+    const pDir = path.join(PROJECTS_DIR, String(p.id));
+    if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+    fs.writeFileSync(path.join(pDir, req.body.name), '');
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/projects/:id/backup', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+  const ts = Date.now();
+  const bname = 'backup_' + ts;
+  p._mcBackups = p._mcBackups || [];
+  p._mcBackups.unshift({ id: ts, label: "Backup " + new Date().toLocaleString(), ts: new Date().toLocaleString(), dir: bname });
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  const wDir = path.join(pDir, 'world');
+  const target = path.join(pDir, bname);
+  try {
+    if(fs.existsSync(wDir)) fs.cpSync(wDir, target, { recursive: true });
+    broadcastLog(u, p.id, '[Backup] Created ' + bname, 'ok');
+  } catch(e) {
+    broadcastLog(u, p.id, '[Backup] Error: ' + e.message, 'err');
+  }
+  saveDB();
+  res.json({ success: true });
+});
+
+app.post('/api/projects/:id/revert', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+  const bname = req.body.dir;
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  const wDir = path.join(pDir, 'world');
+  const target = path.join(pDir, bname);
+  try {
+    if (procs[p.id]) {
+      procs[p.id].stdin.write('stop\n');
+      setTimeout(() => { try { procs[p.id].kill(); } catch(e){} }, 3000);
+      delete procs[p.id];
+      p.running = false;
+    }
+    if(fs.existsSync(target)) {
+       if(fs.existsSync(wDir)) fs.rmSync(wDir, { recursive: true, force: true });
+       fs.cpSync(target, wDir, { recursive: true });
+       broadcastLog(u, p.id, '[Backup] Restored ' + bname, 'ok');
+    }
+  } catch(e) {
+    broadcastLog(u, p.id, '[Backup] Error: ' + e.message, 'err');
+  }
+  saveDB();
+  res.json({ success: true });
+});
+
+app.post('/api/projects/:id/start', async (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+
+  if (procs[p.id]) {
+    try { procs[p.id].kill(); } catch(e) {}
+  }
+
+  p.running = true;
+  saveDB();
+
+  if (p.type === 'minecraft') {
+    fs.writeFileSync(path.join(pDir, 'eula.txt'), 'eula=true\n');
+    fs.writeFileSync(path.join(pDir, 'server.properties'), `server-port=${p.port}\nonline-mode=false\n`);
+    
+    const jarPath = path.join(pDir, 'server.jar');
+    if (!fs.existsSync(jarPath)) {
+      broadcastLog(u, p.id, '[System] Downloading Minecraft server.jar...', 'sys');
+      try {
+        cp.execSync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir });
+        broadcastLog(u, p.id, '[System] Download complete.', 'ok');
+      } catch (e) {
+        broadcastLog(u, p.id, '[System] Failed to download server.jar', 'err');
+      }
+    }
+    
+    const proc = cp.spawn('java', ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir });
+    procs[p.id] = proc;
+    
+    proc.stdout.on('data', d => broadcastLog(u, p.id, d.toString().trim(), 'server'));
+    proc.stderr.on('data', d => broadcastLog(u, p.id, d.toString().trim(), 'warn'));
+    proc.on('close', () => { p.running = false; saveDB(); broadcastLog(u, p.id, '[System] Process exited.', 'sys'); });
+
+  } else {
+    if (p.files) {
+      for (const [fname, content] of Object.entries(p.files)) {
+        fs.writeFileSync(path.join(pDir, fname), content);
+      }
+    }
+    const cmd = p.lang === 'Python' ? 'python' : 'node';
+    const mainFile = Object.keys(p.files || {})[0] || (p.lang === 'Python' ? 'main.py' : 'index.js');
+    const proc = cp.spawn(cmd, [mainFile], { cwd: pDir, env: { ...process.env, BOT_TOKEN: p.botToken || '' } });
+    procs[p.id] = proc;
+
+    proc.stdout.on('data', d => broadcastLog(u, p.id, d.toString().trim(), 'info'));
+    proc.stderr.on('data', d => broadcastLog(u, p.id, d.toString().trim(), 'err'));
+    proc.on('close', () => { p.running = false; saveDB(); broadcastLog(u, p.id, '[System] Process exited.', 'sys'); });
+  }
+
+  res.json({ success: true });
+});
+
+app.post('/api/projects/:id/stop', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+
+  if (procs[p.id]) {
+    if (p.type === 'minecraft') {
+      procs[p.id].stdin.write('stop\n');
+      setTimeout(() => { try { procs[p.id].kill(); } catch(e){} }, 5000);
+    } else {
+      try { procs[p.id].kill(); } catch(e) {}
+    }
+    delete procs[p.id];
+  }
+  
+  p.running = false;
+  saveDB();
+  broadcastLog(u, p.id, '[System] Process stopped manually.', 'warn');
   res.json({ success: true });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Reboot Cord running on port ' + PORT));
+server.listen(PORT, () => console.log('Reboot Cord running on port ' + PORT));
