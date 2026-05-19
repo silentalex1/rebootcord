@@ -37,7 +37,6 @@ input,textarea,select{font-family:var(--font)}
 .svg-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;line-height:0}
 .svg-icon svg{display:block}
 
-/* ========== NAV ========== */
 .nav{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:54px;border-bottom:1px solid var(--border);background:var(--bg);position:sticky;top:0;z-index:100;backdrop-filter:blur(12px)}
 .nav-logo{font-weight:800;font-size:17px;letter-spacing:-.02em;display:flex;align-items:center;gap:2px}
 .nav-logo-r{color:var(--red)}
@@ -47,7 +46,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-logout-nav{background:var(--surface2);color:var(--text-dim);padding:6px 12px;border-radius:7px;font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;transition:.15s;border:1px solid var(--border)}
 .btn-logout-nav:hover{background:var(--surface3);color:var(--text)}
 
-/* ========== PROJECTS ========== */
 .projects-page{padding:28px 24px;max-width:1100px;margin:0 auto}
 .projects-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
 .projects-title h1{font-size:26px;font-weight:800;letter-spacing:-.03em}
@@ -60,7 +58,6 @@ input,textarea,select{font-family:var(--font)}
 .empty-title{font-size:16px;font-weight:800}
 .empty-sub{font-size:13px;color:var(--text-dim);max-width:340px;line-height:1.5}
 
-/* project cards */
 .project-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;transition:.18s;position:relative}
 .project-card:hover{transform:translateY(-2px)}
 .project-card.discord{border-color:#5865f218}
@@ -89,7 +86,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-delete{background:transparent;color:var(--text-muted);padding:7px 14px;border-radius:7px;font-size:12px;border:1px solid var(--border);transition:.15s}
 .btn-delete:hover{border-color:var(--red);color:var(--red)}
 
-/* ========== MODAL ========== */
 .modal-overlay{position:fixed;inset:0;background:#00000090;backdrop-filter:blur(6px);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
 .modal{background:var(--surface);border:1px solid var(--border-bright);border-radius:16px;padding:24px;width:100%;max-width:480px;animation:modalIn .18s ease;max-height:90vh;overflow-y:auto}
 @keyframes modalIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
@@ -119,7 +115,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-create:hover{filter:brightness(1.1)}
 .btn-create:disabled{opacity:.35;cursor:not-allowed}
 
-/* ========== LOADING ========== */
 .loading-screen{position:fixed;inset:0;background:var(--bg);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px}
 .loading-screen.mc{background:#05100a}
 .loading-icon-wrap{width:60px;height:60px;display:flex;align-items:center;justify-content:center;border-radius:16px;animation:pulse 1s ease infinite}
@@ -132,7 +127,6 @@ input,textarea,select{font-family:var(--font)}
 @keyframes load{from{width:0}to{width:100%}}
 .loading-text{color:var(--text-dim);font-size:13px;font-family:var(--mono)}
 
-/* ========== DASH NAV ========== */
 .dash-nav{display:flex;align-items:center;gap:10px;padding:0 16px;height:48px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:50;flex-wrap:wrap}
 .discord-nav{border-bottom-color:#5865f228;background:#0a0b12}
 .dash-nav-discord-icon{display:flex;align-items:center;color:var(--blue-bright)}
@@ -157,11 +151,9 @@ input,textarea,select{font-family:var(--font)}
 .btn-start-discord{background:var(--blue);color:#fff;padding:5px 13px;border-radius:7px;font-size:12px;font-weight:800;display:flex;align-items:center;gap:6px;transition:.15s}
 .btn-start-discord:hover{background:var(--blue-dark)}
 
-/* ========== DASHBOARD LAYOUT ========== */
 .dashboard{display:flex;height:calc(100vh - 96px);overflow:hidden}
 .discord-dash{background:#080810}
 
-/* ========== DISCORD SIDEBAR ========== */
 .sidebar{width:216px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;position:relative}
 .discord-sidebar{background:#0a0b14;border-right-color:#5865f218;position:relative;overflow:hidden}
 .discord-wave-bg{position:absolute;bottom:0;left:0;right:0;height:120px;pointer-events:none;z-index:0;background:linear-gradient(180deg,transparent 0%,#5865f208 60%,#5865f215 100%)}
@@ -197,7 +189,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-save{background:var(--surface3);color:var(--text);padding:7px 10px;border-radius:7px;font-size:11px;font-weight:700;transition:.15s;display:flex;align-items:center;gap:4px}
 .btn-save:hover{background:var(--surface4)}
 
-/* ========== EDITOR ========== */
 .main-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .editor-area{flex:1;background:var(--surface2);position:relative;overflow:hidden}
 .editor-toolbar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--surface)}
@@ -207,7 +198,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-save-file:hover{background:var(--surface4)}
 .code-editor{width:100%;height:100%;background:transparent;border:none;outline:none;padding:14px;color:#c9d1d9;font-family:var(--mono);font-size:12px;resize:none;line-height:1.65}
 
-/* ========== CONSOLE (DISCORD) ========== */
 .console-panel{height:200px;background:#090909;border-top:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
 .discord-console{background:#080810;border-top-color:#5865f218}
 .console-toolbar{display:flex;align-items:center;justify-content:space-between;padding:6px 14px;border-bottom:1px solid var(--border)}
@@ -216,8 +206,8 @@ input,textarea,select{font-family:var(--font)}
 .console-controls{display:flex;align-items:center;gap:10px}
 .btn-clear{background:transparent;color:var(--text-muted);font-size:11px;border:none;cursor:pointer;font-weight:600}
 .btn-clear:hover{color:var(--text)}
-.console-body{flex:1;overflow-y:auto;padding:8px 14px;font-family:var(--mono);font-size:11px;line-height:1.7;overscroll-behavior:contain}
-.mc-console-body{flex:1;overflow-y:auto;padding:10px 14px;font-family:var(--mono);font-size:12px;line-height:1.7;overscroll-behavior:contain}
+.console-body{flex:1;overflow-y:auto;padding:8px 14px;font-family:var(--mono);font-size:11px;line-height:1.7;overscroll-behavior:contain; white-space: pre-wrap;}
+.mc-console-body{flex:1;overflow-y:auto;padding:10px 14px;font-family:var(--mono);font-size:12px;line-height:1.7;overscroll-behavior:contain; white-space: pre-wrap;}
 .log-line{display:flex;gap:10px}
 .log-time{color:var(--text-muted);flex-shrink:0}
 .log-err{color:#ff6b6b}
@@ -225,13 +215,12 @@ input,textarea,select{font-family:var(--font)}
 .log-warn{color:#ffd166}
 .log-ok{color:var(--green)}
 .log-sys{color:#c792ea}
-.mc-log-server{color:var(--mc-bright)}
+.mc-log-server{color:var(--text)}
 .mc-log-warn{color:#ffd166}
 .mc-log-err{color:#ff6b6b}
 .mc-log-info{color:#a8d5a2}
 .mc-log-ok{color:var(--mc-bright)}
 
-/* ========== MC SIDEBAR ========== */
 .mc-sidebar{width:216px;background:#090f09;border-right:1px solid #162016;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
 .mc-header-section{padding:14px;border-bottom:1px solid #162016}
 .mc-server-name{font-weight:800;font-size:14px;margin-bottom:2px;letter-spacing:-.01em}
@@ -245,7 +234,6 @@ input,textarea,select{font-family:var(--font)}
 .mc-quick-btn.secondary{background:#1a1a1a;color:var(--text-dim)}
 .mc-quick-btn.secondary:hover{background:#222}
 
-/* ========== MC MAIN ========== */
 .mc-main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .mc-content{flex:1;overflow-y:auto;padding:20px;overscroll-behavior:contain}
 .mc-stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:10px;margin-bottom:20px}
@@ -255,7 +243,6 @@ input,textarea,select{font-family:var(--font)}
 .mc-stat-sub{font-size:11px;color:var(--text-muted);margin-top:2px}
 .mc-section-title{font-size:13px;font-weight:800;margin-bottom:12px;color:var(--text);letter-spacing:.01em;text-transform:uppercase}
 
-/* mc files */
 .files-list{display:flex;flex-direction:column;gap:6px}
 .file-item{display:flex;align-items:center;gap:10px;background:#090f09;border:1px solid #162016;border-radius:8px;padding:10px 13px;transition:.15s}
 .file-item:hover{border-color:#243a24}
@@ -268,7 +255,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-add-file{background:#1c381c;color:var(--mc-bright);border:1px dashed #2a5a2a;width:100%;padding:12px;border-radius:8px;font-size:12px;font-weight:700;margin-top:8px;transition:.15s;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px}
 .btn-add-file:hover{background:#223a22}
 
-/* mods */
 .mods-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:10px}
 .mod-card{background:#090f09;border:1px solid #162016;border-radius:8px;padding:12px}
 .mod-card-name{font-weight:700;font-size:13px;margin-bottom:2px}
@@ -279,7 +265,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-upload-mod{background:#1c381c;color:var(--mc-bright);border:1px solid #2a5a2a;padding:9px 14px;border-radius:8px;font-size:12px;font-weight:700;transition:.15s;cursor:pointer;display:flex;align-items:center;gap:7px}
 .btn-upload-mod:hover{background:#223a22}
 
-/* mc console */
 .mc-console{height:100%;display:flex;flex-direction:column;background:#04090a}
 .mc-console-toolbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #162016;background:#060d06}
 .mc-console-input-row{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #162016;background:#060d06}
@@ -288,7 +273,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-send-cmd{background:var(--mc-bright);color:#000;padding:8px 16px;border-radius:7px;font-weight:800;font-size:12px;transition:.15s}
 .btn-send-cmd:hover{background:var(--mc)}
 
-/* ========== BACKUPS ========== */
 .backups-list{display:flex;flex-direction:column;gap:8px}
 .backup-row{display:flex;align-items:center;justify-content:space-between;gap:10px;background:#090f09;border:1px solid #162016;border-radius:8px;padding:12px 14px;flex-wrap:wrap}
 .backup-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0;color:var(--mc-bright)}
@@ -298,7 +282,6 @@ input,textarea,select{font-family:var(--font)}
 .btn-revert{background:#1c381c;color:var(--mc-bright);border:1px solid #2a5a2a;padding:7px 13px;border-radius:7px;font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px;transition:.15s;white-space:nowrap}
 .btn-revert:hover{background:#223a22}
 
-/* ========== SERVER ABOUT ========== */
 .about-editor{width:100%;min-height:160px;background:#090f09;border:1px solid #162016;border-radius:8px;padding:14px;color:var(--text);font-size:13px;line-height:1.7;resize:vertical;outline:none;transition:.15s}
 .about-editor:focus{border-color:var(--mc-bright)}
 .about-preview{background:#090f09;border:1px solid #162016;border-radius:8px;padding:14px;font-size:14px;line-height:1.8;min-height:80px;color:var(--text);white-space:pre-wrap;word-break:break-word}
@@ -306,13 +289,11 @@ input,textarea,select{font-family:var(--font)}
 .font-btn:hover{border-color:var(--border-bright);color:var(--text)}
 .font-btn.active{border-color:var(--mc-bright);color:var(--mc-bright);background:var(--surface3)}
 
-/* ========== SCROLLBAR ========== */
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:#2e2e2e;border-radius:10px}
 ::-webkit-scrollbar-thumb:hover{background:#3a3a3a}
 
-/* ========== RESPONSIVE ========== */
 @media(max-width:640px){
   .dashboard{flex-direction:column;height:auto;min-height:calc(100vh - 96px)}
   .sidebar,.mc-sidebar{width:100%;height:auto;border-right:none;border-bottom:1px solid var(--border);flex-direction:row;overflow-x:auto;display:flex;flex-wrap:nowrap}
