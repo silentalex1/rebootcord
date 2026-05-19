@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Project — Reboot Cord</title>
+    <link rel="stylesheet" href="project.css">
+</head>
+<body>
+    <nav class="topbar">
+        <div class="brand">
+            <span class="brand-dot"></span>
+            Reboot<span>Cord</span>
+        </div>
+        <div class="user-area">
+            <a href="/dashboard" class="back-link">← Dashboard</a>
+            <span id="nav-username"></span>
+            <button onclick="logout()">Logout</button>
+        </div>
+    </nav>
+
+    <main class="main">
+        <div id="loading-state" class="loading-state">Loading project...</div>
+
+        <div id="project-content" class="hidden">
+            <div class="project-header">
+                <div class="project-title-row">
+                    <div class="project-icon" id="proj-icon">⚡</div>
+                    <div>
+                        <h2 id="proj-name">Project</h2>
+                        <div class="project-meta">
+                            <span class="badge" id="proj-lang-badge">js</span>
+                            <span class="status-pill" id="status-pill">
+                                <span class="status-dot-sm" id="status-dot"></span>
+                                <span id="status-text">Offline</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-start" id="btn-start" onclick="startBot()">▶ Start</button>
+                    <button class="btn-stop hidden" id="btn-stop" onclick="stopBot()">■ Stop</button>
+                    <button class="btn-delete" onclick="deleteProject()">Delete</button>
+                </div>
+            </div>
+
+            <div class="panels">
+                <div class="panel">
+                    <div class="panel-title">Bot Token</div>
+                    <div class="panel-body">
+                        <p class="panel-desc">Paste your Discord bot token. It will be passed as the <code>DISCORD_TOKEN</code> environment variable when your bot starts.</p>
+                        <div class="token-row">
+                            <input type="password" id="token-input" placeholder="Paste bot token here…">
+                            <button onclick="saveToken()">Save</button>
+                        </div>
+                        <p class="field-msg" id="token-msg"></p>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-title">Upload Bot File</div>
+                    <div class="panel-body">
+                        <p class="panel-desc">Upload your main bot file (.js or .py). Max 10 MB.</p>
+                        <div class="upload-area" id="upload-area" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+                            <div class="upload-icon">📁</div>
+                            <p class="upload-label">Drag & drop or <label class="upload-link" for="file-input">browse</label></p>
+                            <p class="upload-hint" id="upload-hint">No file uploaded yet</p>
+                            <input type="file" id="file-input" accept=".js,.py" style="display:none" onchange="uploadFile(this.files[0])">
+                        </div>
+                        <p class="field-msg" id="upload-msg"></p>
+                    </div>
+                </div>
+
+                <div class="panel panel-full">
+                    <div class="panel-title-row">
+                        <div class="panel-title">Console Logs</div>
+                        <button class="btn-clear" onclick="clearLogs()">Clear</button>
+                    </div>
+                    <div class="log-box" id="log-box">
+                        <div class="log-empty" id="log-empty">No logs yet. Start your bot to see output here.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="not-found" class="hidden not-found">
+            <p>Project not found.</p>
+            <a href="/dashboard">← Back to Dashboard</a>
+        </div>
+    </main>
+
+    <script src="project.js"></script>
+</body>
+</html>
