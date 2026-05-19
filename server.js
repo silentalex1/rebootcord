@@ -34,6 +34,7 @@ function signToken(username) {
   const sig = crypto.createHmac('sha256', SECRET).update(payload).digest('base64');
   return payload + '.' + sig;
 }
+
 function verifyToken(token) {
   if (!token) return null;
   const parts = token.split('.');
@@ -45,22 +46,28 @@ function verifyToken(token) {
 
 function parseCookies(req) {
   const out = {};
-  (req.headers.cookie || '').split(';').forEach(p => {
-    const [k, ...v] = p.trim().split('=');
-    if (k) out[k.trim()] = v.join('=').trim();
+  const cookieHeader = req.headers.cookie || '';
+  cookieHeader.split(';').forEach(p => {
+    const parts = p.trim().split('=');
+    const k = parts[0];
+    const v = parts.slice(1).join('=');
+    if (k) out[k.trim()] = v.trim();
   });
   return out;
 }
+
 function getUser(req) { return verifyToken(parseCookies(req)['rc_tok']); }
+
 function setCookie(res, token) {
   res.setHeader('Set-Cookie', 'rc_tok=' + token + '; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800');
 }
+
 function clearCookie(res) {
   res.setHeader('Set-Cookie', 'rc_tok=; HttpOnly; Path=/; Max-Age=0');
 }
 
-function broadcastLog(username, projectId, msg, type = 'info') {
-  const payload = JSON.stringify({ event: 'log', projectId, msg, type });
+function broadcastLog(username, projectId, msg, type) {
+  const payload = JSON.stringify({ event: 'log', projectId, msg, type: type || 'info' });
   for (const client of wsClients) {
     if (client.username === username && client.readyState === WebSocket.OPEN) {
       client.send(payload);
@@ -81,7 +88,9 @@ wss.on('connection', (ws, req) => {
         procs[data.projectId].stdin.write(data.cmd + '\n');
       }
       if (data.event === 'install' && data.projectId) {
-        const p = db.users.find(u => u.username === user).projects.find(x => x.id === data.projectId);
+        const uObj = db.users.find(u => u.username === user);
+        if (!uObj) return;
+        const p = uObj.projects.find(x => x.id === data.projectId);
         if (p) {
           const pDir = path.join(PROJECTS_DIR, String(p.id));
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
@@ -170,8 +179,8 @@ app.post('/api/projects', (req, res) => {
     const pDir = path.join(PROJECTS_DIR, String(p.id));
     if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
     if (p.files) {
-      for (const [fname, content] of Object.entries(p.files)) {
-        fs.writeFileSync(path.join(pDir, fname), content);
+      for (const fname of Object.keys(p.files)) {
+        fs.writeFileSync(path.join(pDir, fname), p.files[fname]);
       }
     }
   });
@@ -351,8 +360,8 @@ app.post('/api/projects/:id/start', async (req, res) => {
 
   } else {
     if (p.files) {
-      for (const [fname, content] of Object.entries(p.files)) {
-        fs.writeFileSync(path.join(pDir, fname), content);
+      for (const fname of Object.keys(p.files)) {
+        fs.writeFileSync(path.join(pDir, fname), p.files[fname]);
       }
     }
     const cmd = p.lang === 'Python' ? 'python' : 'node';
