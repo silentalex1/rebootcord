@@ -171,7 +171,7 @@ input,textarea,select{font-family:var(--font)}
 .discord-badge{background:var(--blue) !important;color:#fff !important}
 .btn-add-file-small{width:100%;background:transparent;color:var(--text-muted);border:1px dashed var(--border);padding:6px 8px;border-radius:6px;font-size:11px;font-weight:700;margin-top:6px;display:flex;align-items:center;gap:5px;transition:.15s}
 .btn-add-file-small:hover{background:var(--surface3);color:var(--text);border-color:var(--border-bright)}
-.pkg-input{background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:11px;font-family:var(--mono);width:100%;outline:none;margin-bottom:8px;transition:.15s}
+.pkg-input{background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 10px;color:var(--text);font-size:11px;font-family:var(--mono);width:100%;outline:none;margin-bottom:8px;transition:.15s;min-width:0;}
 .discord-input{background:#1a1b2e;border-color:#5865f228}
 .discord-input:focus{border-color:var(--blue) !important}
 .pkg-input:focus{border-color:var(--blue)}
@@ -184,20 +184,20 @@ input,textarea,select{font-family:var(--font)}
 .settings-field{margin-bottom:12px}
 .settings-field label{font-size:10px;color:var(--text-muted);display:block;margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
 .settings-row{display:flex;gap:6px}
-.settings-input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 9px;color:var(--text);font-size:11px;font-family:var(--mono);outline:none;transition:.15s}
+.settings-input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 9px;color:var(--text);font-size:11px;font-family:var(--mono);outline:none;transition:.15s;min-width:0;}
 .settings-input:focus{border-color:var(--blue)}
 .btn-save{background:var(--surface3);color:var(--text);padding:7px 10px;border-radius:7px;font-size:11px;font-weight:700;transition:.15s;display:flex;align-items:center;gap:4px}
 .btn-save:hover{background:var(--surface4)}
 
-.main-area{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--surface2)}
+.main-area{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--surface2);position:relative}
 .editor-wrapper { display: flex; flex: 1; position: relative; overflow: hidden; background: var(--surface2); }
-.line-numbers { padding: 14px 8px; background: var(--surface); color: var(--text-muted); text-align: right; font-family: var(--mono); font-size: 12px; line-height: 1.65; user-select: none; border-right: 1px solid var(--border); min-width: 40px; overflow-y: hidden; }
+.line-numbers { padding: 14px 8px; background: var(--surface); color: var(--text-muted); text-align: right; font-family: var(--mono); font-size: 13px; line-height: 1.6; user-select: none; border-right: 1px solid var(--border); min-width: 40px; overflow-y: hidden; }
 .code-container { position: relative; flex: 1; overflow: hidden; background: transparent; }
-.code-editor, .highlight-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; padding: 14px; font-family: var(--mono); font-size: 12px; line-height: 1.65; white-space: pre; overflow: auto; border: none; tab-size: 4; margin: 0; word-break: break-all; }
+.code-editor, .highlight-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; padding: 14px; font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre; overflow: auto; border: none; tab-size: 4; margin: 0; word-break: break-all; }
 .code-editor { color: transparent; background: transparent; caret-color: #f4f4f4; outline: none; resize: none; z-index: 2; }
 .highlight-layer { z-index: 1; color: #c9d1d9; pointer-events: none; }
 
-.editor-toolbar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--surface)}
+.editor-toolbar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap;gap:8px;}
 .discord-toolbar{background:#0d0e1a;border-bottom-color:#5865f218}
 .editor-filename{font-family:var(--mono);font-size:12px;color:var(--text-dim)}
 .btn-save-file{background:var(--surface3);color:var(--text);padding:5px 12px;border-radius:6px;font-size:11px;font-weight:700;display:flex;align-items:center;gap:5px;transition:.15s;cursor:pointer;border:none;}
@@ -213,7 +213,7 @@ input,textarea,select{font-family:var(--font)}
 .btn-clear:hover{color:var(--text)}
 .console-body{flex:1;overflow-y:auto;padding:8px 14px;font-family:var(--mono);font-size:11px;line-height:1.7;overscroll-behavior:contain; white-space: pre-wrap; word-break: break-all;}
 .mc-console-body{flex:1;overflow-y:auto;padding:10px 14px;font-family:var(--mono);font-size:12px;line-height:1.7;overscroll-behavior:contain; white-space: pre-wrap; word-break: break-all;}
-.log-line{display:flex;gap:10px}
+.log-line{display:flex;gap:10px;margin-bottom:2px;}
 .log-time{color:var(--text-muted);flex-shrink:0}
 .log-err{color:#ff6b6b}
 .log-info{color:#6bcfff}
@@ -249,7 +249,7 @@ input,textarea,select{font-family:var(--font)}
 .mc-section-title{font-size:13px;font-weight:800;margin-bottom:12px;color:var(--text);letter-spacing:.01em;text-transform:uppercase}
 
 .files-list{display:flex;flex-direction:column;gap:6px}
-.file-item{display:flex;align-items:center;gap:10px;background:#090f09;border:1px solid #162016;border-radius:8px;padding:10px 13px;transition:.15s}
+.file-item{display:flex;align-items:center;gap:10px;background:#090f09;border:1px solid #162016;border-radius:8px;padding:10px 13px;transition:.15s;flex-wrap:wrap}
 .file-item:hover{border-color:#243a24}
 .file-item-name{flex:1;font-family:var(--mono);font-size:12px;word-break:break-all}
 .file-item-size{font-size:10px;color:var(--text-muted);font-family:var(--mono)}
@@ -314,4 +314,5 @@ input,textarea,select{font-family:var(--font)}
   .projects-title h1{font-size:22px}
   .mc-content{padding:14px}
   .editor-wrapper{min-height:350px}
+  .editor-toolbar{flex-direction:column;align-items:flex-start}
 }
