@@ -96,7 +96,7 @@ wss.on('connection', (ws, req) => {
       if (data.event === 'install' && data.projectId) {
         const uObj = db.users.find(u => u.username === user);
         if (!uObj) return;
-        const p = uObj.projects.find(x => x.id === data.projectId);
+        const p = uObj.projects.find(x => String(x.id) === String(data.projectId));
         if (p) {
           const pDir = path.join(PROJECTS_DIR, String(p.id));
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
@@ -294,6 +294,20 @@ app.post('/api/projects/:id/touch', (req, res) => {
   res.json({ success: true });
 });
 
+app.post('/api/projects/:id/mkdir', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (p && req.body.name) {
+    const pDir = path.join(PROJECTS_DIR, String(p.id));
+    const target = path.join(pDir, req.body.name);
+    if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true });
+    broadcastLog(u, p.id, '[System] Created folder ' + req.body.name, 'info');
+  }
+  res.json({ success: true });
+});
+
 app.post('/api/projects/:id/backup', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
@@ -406,7 +420,11 @@ app.post('/api/projects/:id/start', async (req, res) => {
   } else {
     if (p.files) {
       for (const fname of Object.keys(p.files)) {
-        fs.writeFileSync(path.join(pDir, fname), p.files[fname]);
+        const filePath = path.join(pDir, fname);
+        if (!fs.existsSync(path.dirname(filePath))) {
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        }
+        fs.writeFileSync(filePath, p.files[fname]);
       }
     }
     const cmd = p.lang === 'Python' ? 'python3' : 'node';
@@ -445,8 +463,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
       p.running = false; 
       saveDB(); 
       if (missingPkgs.size > 0) {
-        broadcastLog(u, p.id, `[System] Missing packages detected! Type the following in the Packages box and click Install:`, 'ok');
-        missingPkgs.forEach(pkg => broadcastLog(u, p.id, pkg, 'ok'));
+        missingPkgs.forEach(pkg => broadcastLog(u, p.id, `[System] Missing package detected! Type '${pkg}' in the Packages box and click Install.`, 'sys'));
       }
       broadcastLog(u, p.id, '[System] Process exited.', 'sys'); 
     });
