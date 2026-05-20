@@ -665,7 +665,10 @@ function renderBotDashboard() {
       filesSection,
       el("div", { className: "sidebar-section" },
         el("div", { className: "sidebar-label discord-label" }, svgIcon("pkg"), " Packages"),
-        pkgInput,
+        el("div", { style: { display: "flex", gap: "6px" } }, 
+          pkgInput, 
+          el("button", { className: "btn-clear", style: { margin: 0, padding: 0 }, onClick: () => { const i = document.getElementById("pkgInput"); if(i) i.value = ""; } }, svgIcon("trash"))
+        ),
         el("button", { className: "btn-install discord-btn", onClick: installPkg }, svgIcon("download"), " Install"),
         installAllSection
       ),
@@ -731,7 +734,7 @@ function renderMcDashboard() {
     )
   ));
 
-  const navWrap = el("div", { style: { padding:"8px 0" } });
+  const navWrap = el("div", { style: { padding:"8px 0", display: "flex", flexDirection: "column", gap: "4px" } });
   [
     { id: "overview",  iconType: "chart",    label: "Overview"       },
     { id: "files",     iconType: "folder",   label: "Files"          },
