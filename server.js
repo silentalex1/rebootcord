@@ -108,7 +108,7 @@ wss.on('connection', (ws, req) => {
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
           const cmd = p.lang === 'Python' ? `pip install ${data.pkg} --target ./modules` : `npm install ${data.pkg}`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -123,9 +123,14 @@ wss.on('connection', (ws, req) => {
         if (p) {
           const pDir = path.join(PROJECTS_DIR, String(p.id));
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+          if (p.lang === 'Python' && !fs.existsSync(path.join(pDir, 'requirements.txt'))) {
+            fs.writeFileSync(path.join(pDir, 'requirements.txt'), '');
+          } else if (p.lang !== 'Python' && !fs.existsSync(path.join(pDir, 'package.json'))) {
+            fs.writeFileSync(path.join(pDir, 'package.json'), '{"name":"bot","dependencies":{}}');
+          }
           const cmd = p.lang === 'Python' ? `pip install -r requirements.txt --target ./modules` : `npm install`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -311,8 +316,11 @@ app.post('/api/projects/:id/touch', (req, res) => {
   const p = user.projects.find(x => String(x.id) === req.params.id);
   if (p && req.body.name) {
     const pDir = path.join(PROJECTS_DIR, String(p.id));
-    if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-    fs.writeFileSync(path.join(pDir, req.body.name), '');
+    const filePath = path.join(pDir, req.body.name);
+    if (!fs.existsSync(path.dirname(filePath))) {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    }
+    fs.writeFileSync(filePath, '');
   }
   res.json({ success: true });
 });
@@ -402,16 +410,15 @@ app.post('/api/projects/:id/start', async (req, res) => {
   if (p.type === 'minecraft') {
     let javaCmd = 'java';
     try {
-      await execAsync('java -version');
+      await execAsync('java -version', { shell: true });
     } catch (e) {
       const jreDir = path.join(PROJECTS_DIR, 'jre');
       const jreBin = path.join(jreDir, 'bin', 'java');
       if (!fs.existsSync(jreBin)) {
         broadcastLog(u, p.id, '[System] Java not found locally. Downloading portable JRE...', 'sys');
         try {
-          await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR });
-          await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR });
-          await execAsync(`chmod +x ${jreBin}`);
+          await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR, shell: true });
+          await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR, shell: true });
           broadcastLog(u, p.id, '[System] JRE downloaded successfully.', 'ok');
         } catch (err) {
           broadcastLog(u, p.id, '[System] Failed to download JRE: ' + err.message, 'err');
@@ -427,14 +434,14 @@ app.post('/api/projects/:id/start', async (req, res) => {
     if (!fs.existsSync(jarPath)) {
       broadcastLog(u, p.id, '[System] Downloading Minecraft server.jar...', 'sys');
       try {
-        await execAsync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir });
+        await execAsync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir, shell: true });
         broadcastLog(u, p.id, '[System] Download complete.', 'ok');
       } catch (e) {
         broadcastLog(u, p.id, '[System] Failed to download server.jar', 'err');
       }
     }
     
-    const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir });
+    const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true });
     procs[p.id] = proc;
 
     proc.on('error', (err) => {
@@ -475,7 +482,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
     const envVars = { ...process.env, BOT_TOKEN: p.botToken || '', TOKEN: p.botToken || '' };
     if (p.lang === 'Python') envVars.PYTHONPATH = path.join(pDir, 'modules');
 
-    const proc = cp.spawn(cmd, ['-u', mainFile], { cwd: pDir, env: envVars });
+    const proc = cp.spawn(cmd, ['-u', mainFile], { cwd: pDir, env: envVars, shell: true });
     procs[p.id] = proc;
 
     let missingPkgs = new Set();
@@ -527,12 +534,7 @@ app.post('/api/projects/:id/stop', (req, res) => {
   if (!p) return res.json({ success: false });
 
   if (procs[p.id]) {
-    if (p.type === 'minecraft') {
-      procs[p.id].stdin.write('stop\n');
-      setTimeout(() => { try { procs[p.id].kill(); } catch(e){} }, 5000);
-    } else {
-      try { procs[p.id].kill(); } catch(e) {}
-    }
+    try { procs[p.id].kill(); } catch(e) {}
     delete procs[p.id];
   }
   
