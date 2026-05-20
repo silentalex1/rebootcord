@@ -42,6 +42,7 @@ const state = {
   mcMods: [],
   mcBackups: [],
   username: "",
+  missingPackages: []
 };
 
 let ws;
@@ -58,6 +59,14 @@ function connectWS() {
         const tgt = p.type === 'minecraft' ? state.mcLogs : state.botLogs;
         tgt.push({ t: getTime(), type: data.type, msg: data.msg });
         trimLogs(tgt);
+        
+        const match = data.msg.match(/Missing package detected! Type '([^']+)'/);
+        if (match && match[1]) {
+          if (!state.missingPackages.includes(match[1])) {
+            state.missingPackages.push(match[1]);
+          }
+        }
+        
         if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
           scheduleRender();
         }
@@ -191,7 +200,7 @@ function switchFile(filename) {
   saveCurrentFile();
   state.editorFile = filename;
   state.codeContent = "";
-  if (state.currentProject.files && state.currentProject.files[filename]) {
+  if (state.currentProject.files && state.currentProject.files[filename] !== undefined) {
     state.codeContent = state.currentProject.files[filename];
   } else {
     fetch('/api/projects/' + state.currentProject.id + '/file?name=' + encodeURIComponent(filename))
@@ -417,7 +426,7 @@ function createProject() {
   state.currentProject = p;
   state.newName = ""; state.newMcIp = ""; state.newMcServerType = "Vanilla";
   state.mcView = "overview"; state.mcFiles = []; state.mcMods = []; state.mcBackups = [];
-  state.botLogs = []; state.mcLogs = [];
+  state.botLogs = []; state.mcLogs = []; state.missingPackages = [];
   if (p.type === "discord") {
     state.editorFile = getDefaultFilename(p);
     state.codeContent = p.files[state.editorFile];
@@ -438,14 +447,14 @@ function openProject(id) {
   state.mcFiles = p._mcFiles || [];
   state.mcMods = p._mcMods || [];
   state.mcBackups = p._mcBackups || [];
-  state.botLogs = []; state.mcLogs = [];
+  state.botLogs = []; state.mcLogs = []; state.missingPackages = [];
   fetch('/api/projects/' + id + '/dir').then(r => r.json()).then(d => {
     if (d.success) {
       if (p.type === "minecraft") {
         state.mcFiles = d.files;
       } else {
         d.files.forEach(f => {
-          if (!f.isDir && !(f.name in p.files)) {
+          if (!f.isDir && p.files[f.name] === undefined) {
             p.files[f.name] = "";
           }
         });
@@ -453,9 +462,23 @@ function openProject(id) {
     }
     if (p.type === "discord") {
       state.editorFile = getDefaultFilename(p);
-      state.codeContent = (p.files && p.files[state.editorFile]) || "";
+      if (p.files[state.editorFile] !== undefined) {
+        state.codeContent = p.files[state.editorFile];
+        render();
+      } else {
+        fetch('/api/projects/' + id + '/file?name=' + encodeURIComponent(state.editorFile))
+          .then(r => r.json())
+          .then(d2 => {
+            if (d2.success) {
+              state.codeContent = d2.content;
+              p.files[state.editorFile] = d2.content;
+            }
+            render();
+          });
+      }
+    } else {
+      render();
     }
-    render();
   });
 }
 
@@ -522,7 +545,7 @@ function renderBotDashboard() {
       el("button", { className: "btn-clear", style: { margin: "0" }, onClick: () => {
         fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => {
           if (d.success) {
-            d.files.forEach(f => { if (!f.isDir && !(f.name in p.files)) p.files[f.name] = ""; });
+            d.files.forEach(f => { if (!f.isDir && p.files[f.name] === undefined) p.files[f.name] = ""; });
             render();
           }
         });
@@ -551,6 +574,17 @@ function renderBotDashboard() {
   const pkgInput = el("input", { className: "pkg-input discord-input", id: "pkgInput", placeholder: "package name" });
   pkgInput.onkeydown = (ev) => { if (ev.key === "Enter") installPkg(); };
 
+  let installAllSection = null;
+  if (state.missingPackages && state.missingPackages.length > 0) {
+    installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: () => {
+      state.missingPackages.forEach(pkg => {
+        ws.send(JSON.stringify({ event: 'install', projectId: p.id, pkg: pkg }));
+      });
+      state.missingPackages = [];
+      render();
+    }}, svgIcon("download"), " Install All Detected");
+  }
+
   const tInput = el("input", { className: "settings-input discord-input", type: "password", id: "tokenInput", placeholder: "Paste your bot token", value: p.botToken || "" });
   const tSaveBtn = el("button", { className: "btn-save discord-btn-sm" }, svgIcon("save"));
   tSaveBtn.onclick = () => {
@@ -564,12 +598,34 @@ function renderBotDashboard() {
     setTimeout(() => { tSaveBtn.innerHTML = ""; tSaveBtn.appendChild(svgIcon("save")); }, 1400);
   };
 
+  const clearCodeBtn = el("button", { className: "btn-save-file discord-btn-sm", style: { marginRight: "8px", background: "transparent", border: "1px solid var(--border)" }, onClick: () => {
+    state.codeContent = "";
+    saveCurrentFile();
+    render();
+  }}, svgIcon("trash"), " Clear Code");
+
   const saveFileBtn = el("button", { className: "btn-save-file discord-btn-sm" }, svgIcon("save"), " Save");
   saveFileBtn.onclick = () => { saveCurrentFile(); flashSaveBtn(saveFileBtn); };
 
-  const ta = el("textarea", { className: "code-editor", spellcheck: "false", placeholder: "Write your bot code here..." });
-  ta.value = state.codeContent;
-  ta.oninput = () => { state.codeContent = ta.value; };
+  const ta = el("textarea", { className: "code-editor", spellcheck: "false", wrap: "off" });
+  ta.value = state.codeContent || "";
+  
+  const lineNums = el("div", { className: "line-numbers" });
+  const updateLineNums = () => {
+    const count = (state.codeContent.match(/\n/g) || []).length + 1;
+    const arr = [];
+    for(let i=1; i<=count; i++) arr.push(i);
+    lineNums.innerText = arr.join('\n');
+  };
+  updateLineNums();
+
+  ta.onscroll = () => { lineNums.scrollTop = ta.scrollTop; };
+  ta.oninput = () => { 
+    state.codeContent = ta.value; 
+    updateLineNums();
+  };
+
+  const editorWrapper = el("div", { className: "editor-wrapper" }, lineNums, ta);
 
   frag.appendChild(el("div", { className: "dashboard discord-dash" },
     el("div", { className: "sidebar discord-sidebar" },
@@ -578,7 +634,8 @@ function renderBotDashboard() {
       el("div", { className: "sidebar-section" },
         el("div", { className: "sidebar-label discord-label" }, svgIcon("pkg"), " Packages"),
         pkgInput,
-        el("button", { className: "btn-install discord-btn", onClick: installPkg }, svgIcon("download"), " Install")
+        el("button", { className: "btn-install discord-btn", onClick: installPkg }, svgIcon("download"), " Install"),
+        installAllSection
       ),
       el("div", { className: "sidebar-section" },
         el("div", { className: "sidebar-label discord-label" }, svgIcon("gear"), " Settings"),
@@ -591,9 +648,9 @@ function renderBotDashboard() {
     el("div", { className: "main-area" },
       el("div", { className: "editor-toolbar discord-toolbar" },
         el("span", { className: "editor-filename" }, state.editorFile || mainFile),
-        saveFileBtn
+        el("div", { style: { display: "flex" } }, clearCodeBtn, saveFileBtn)
       ),
-      el("div", { className: "editor-area" }, ta),
+      editorWrapper,
       buildConsole()
     )
   ));
@@ -646,6 +703,7 @@ function renderMcDashboard() {
   [
     { id: "overview",  iconType: "chart",    label: "Overview"       },
     { id: "files",     iconType: "folder",   label: "Files"          },
+    { id: "adminfiles",iconType: "gear",     label: "Admin Server Files" },
     { id: "mods",      iconType: "plug",     label: "Mods / Plugins" },
     { id: "console",   iconType: "terminal", label: "Console"        },
     { id: "backups",   iconType: "backup",   label: "Backup Worlds"  },
@@ -660,6 +718,7 @@ function renderMcDashboard() {
   const content = el("div", { className: "mc-content" });
   if (state.mcView === "overview")  buildMcOverview(content, p);
   else if (state.mcView === "files") buildMcFiles(content, p);
+  else if (state.mcView === "adminfiles") buildMcAdminFiles(content, p);
   else if (state.mcView === "mods")  buildMcMods(content);
   else if (state.mcView === "backups") buildMcBackups(content, p);
   else if (state.mcView === "about") buildMcAbout(content, p);
@@ -769,6 +828,50 @@ function buildMcFiles(container, p) {
       });
     }
   }}, svgIcon("plus"), " New File"));
+}
+
+function buildMcAdminFiles(container, p) {
+  const refreshBtn = el("button", { className: "btn-upload-mod", style: { background: "transparent", borderColor: "#162016", color: "var(--text-dim)" } }, svgIcon("refresh"), " Refresh");
+  refreshBtn.onclick = () => {
+    fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => { if (d.success) state.mcFiles = d.files; render(); });
+  };
+
+  container.appendChild(el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"12px", flexWrap:"wrap", gap:"8px" } },
+    el("div", { className: "mc-section-title", style: { marginBottom:"0" } }, "Admin Server Files"),
+    el("div", { style: { display: "flex", gap: "8px" } }, refreshBtn)
+  ));
+
+  const list = el("div", { className: "files-list" });
+  if (!state.mcFiles || state.mcFiles.length === 0) list.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"14px" } }, "No directories or files."));
+  
+  (state.mcFiles || []).forEach((f) => {
+    const icEl = svgIcon(f.isDir ? "folder" : "doc");
+    icEl.style.cssText = "color:var(--mc-bright)";
+    list.appendChild(el("div", { className: "file-item" },
+      icEl,
+      el("span", { className: "file-item-name" }, f.name),
+      el("span", { className: "file-item-size" }, f.isDir ? "Directory" : f.size + " B"),
+      el("div", { className: "file-item-actions" },
+        el("button", { className: "btn-file-action danger", onClick: () => {
+          if (confirm("Delete " + f.name + "?")) {
+            fetch('/api/projects/' + p.id + '/deleteFile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: f.name}) }).then(() => {
+              fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => { if (d.success) state.mcFiles = d.files; render(); });
+            });
+          }
+        }}, svgIcon("trash"))
+      )
+    ));
+  });
+  container.appendChild(list);
+
+  container.appendChild(el("button", { className: "btn-add-file", style: { background: "var(--surface3)", border: "1px dashed var(--border)" }, onClick: () => {
+    const name = prompt("Folder name (e.g. plugins):");
+    if (name && name.trim()) {
+      fetch('/api/projects/' + p.id + '/mkdir', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: name.trim()}) }).then(() => {
+        fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => { if (d.success) state.mcFiles = d.files; render(); });
+      });
+    }
+  }}, svgIcon("plus"), " New Folder"));
 }
 
 function buildMcMods(container) {
