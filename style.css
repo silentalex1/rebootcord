@@ -179,7 +179,7 @@ input,textarea,select{font-family:var(--font)}
 .btn-install:hover{background:var(--blue-dark)}
 .discord-btn{background:var(--blue) !important;color:#fff !important}
 .discord-btn:hover{background:var(--blue-dark) !important}
-.discord-btn-sm{background:#1e2040;color:var(--blue-bright);padding:6px 10px;border-radius:6px;font-size:11px;font-weight:700;display:flex;align-items:center;gap:4px;transition:.15s;border:none;cursor:pointer;}
+.discord-btn-sm{background:#1e2040;color:var(--blue-bright);padding:6px 10px;border-radius:6px;font-size:11px;font-weight:700;display:flex;align-items:center;gap:4px;transition:.15s;border:none;cursor:pointer;white-space:nowrap;}
 .discord-btn-sm:hover{background:#252755}
 .settings-field{margin-bottom:12px}
 .settings-field label{font-size:10px;color:var(--text-muted);display:block;margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
@@ -315,4 +315,6 @@ input,textarea,select{font-family:var(--font)}
   .mc-content{padding:14px}
   .editor-wrapper{min-height:350px}
   .editor-toolbar{flex-direction:column;align-items:flex-start}
+  .editor-toolbar > div { width: 100%; display: flex; flex-wrap: wrap; margin-top: 8px; }
+  .btn-save-file { flex: 1; justify-content: center; }
 }
