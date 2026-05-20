@@ -8,6 +8,9 @@ const cp = require('child_process');
 const axios = require('axios');
 const multer = require('multer');
 const cors = require('cors');
+const util = require('util');
+
+const execAsync = util.promisify(cp.exec);
 
 process.on('uncaughtException', () => {});
 process.on('unhandledRejection', () => {});
@@ -378,6 +381,25 @@ app.post('/api/projects/:id/start', async (req, res) => {
   saveDB();
 
   if (p.type === 'minecraft') {
+    let javaCmd = 'java';
+    try {
+      await execAsync('java -version');
+    } catch (e) {
+      const jreDir = path.join(PROJECTS_DIR, 'jre');
+      const jreBin = path.join(jreDir, 'bin', 'java');
+      if (!fs.existsSync(jreBin)) {
+        broadcastLog(u, p.id, '[System] Java not found locally. Downloading portable JRE...', 'sys');
+        try {
+          await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR });
+          await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR });
+          broadcastLog(u, p.id, '[System] JRE downloaded successfully.', 'ok');
+        } catch (err) {
+          broadcastLog(u, p.id, '[System] Failed to download JRE: ' + err.message, 'err');
+        }
+      }
+      javaCmd = fs.existsSync(jreBin) ? jreBin : 'java';
+    }
+
     fs.writeFileSync(path.join(pDir, 'eula.txt'), 'eula=true\n');
     fs.writeFileSync(path.join(pDir, 'server.properties'), `server-port=${p.port}\nserver-ip=0.0.0.0\nonline-mode=false\n`);
     
@@ -385,14 +407,14 @@ app.post('/api/projects/:id/start', async (req, res) => {
     if (!fs.existsSync(jarPath)) {
       broadcastLog(u, p.id, '[System] Downloading Minecraft server.jar...', 'sys');
       try {
-        cp.execSync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir, shell: true });
+        await execAsync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir });
         broadcastLog(u, p.id, '[System] Download complete.', 'ok');
       } catch (e) {
         broadcastLog(u, p.id, '[System] Failed to download server.jar', 'err');
       }
     }
     
-    const proc = cp.spawn('java', ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true });
+    const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true });
     procs[p.id] = proc;
 
     proc.on('error', (err) => {
