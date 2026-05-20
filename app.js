@@ -515,6 +515,15 @@ function installPkg() {
   if (input) input.value = "";
 }
 
+function installAllPkgs() {
+  if (!ws || !state.currentProject || state.missingPackages.length === 0) return;
+  state.missingPackages.forEach(pkg => {
+    ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: pkg }));
+  });
+  state.missingPackages = [];
+  render();
+}
+
 function renderBotDashboard() {
   const p = state.currentProject || {};
   const frag = document.createDocumentFragment();
@@ -576,13 +585,7 @@ function renderBotDashboard() {
 
   let installAllSection = null;
   if (state.missingPackages && state.missingPackages.length > 0) {
-    installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: () => {
-      state.missingPackages.forEach(pkg => {
-        ws.send(JSON.stringify({ event: 'install', projectId: p.id, pkg: pkg }));
-      });
-      state.missingPackages = [];
-      render();
-    }}, svgIcon("download"), " Install All Detected");
+    installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: installAllPkgs }, svgIcon("download"), " Install All Detected");
   }
 
   const tInput = el("input", { className: "settings-input discord-input", type: "password", id: "tokenInput", placeholder: "Paste your bot token", value: p.botToken || "" });
