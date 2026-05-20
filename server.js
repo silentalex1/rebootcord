@@ -7,11 +7,17 @@ const fs = require('fs');
 const cp = require('child_process');
 const axios = require('axios');
 const multer = require('multer');
+const cors = require('cors');
+
+process.on('uncaughtException', () => {});
+process.on('unhandledRejection', () => {});
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 const upload = multer({ dest: 'uploads/' });
+
+app.use(cors());
 
 const DB_FILE = path.join(__dirname, 'db.json');
 const PROJECTS_DIR = path.join(__dirname, 'projects_data');
@@ -338,7 +344,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
 
   if (p.type === 'minecraft') {
     fs.writeFileSync(path.join(pDir, 'eula.txt'), 'eula=true\n');
-    fs.writeFileSync(path.join(pDir, 'server.properties'), `server-port=${p.port}\nonline-mode=false\n`);
+    fs.writeFileSync(path.join(pDir, 'server.properties'), `server-port=${p.port}\nserver-ip=0.0.0.0\nonline-mode=false\n`);
     
     const jarPath = path.join(pDir, 'server.jar');
     if (!fs.existsSync(jarPath)) {
@@ -353,10 +359,18 @@ app.post('/api/projects/:id/start', async (req, res) => {
     
     const proc = cp.spawn('java', ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir });
     procs[p.id] = proc;
+
+    proc.on('error', (err) => {
+      broadcastLog(u, p.id, `[System] Server failed to start: ${err.message}`, 'err');
+    });
     
     proc.stdout.on('data', d => {
       d.toString().split('\n').forEach(line => {
-        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'server');
+        if (!line.trim()) return;
+        broadcastLog(u, p.id, line.trim(), 'server');
+        if (line.includes('Preparing level') || line.includes('Done')) {
+          broadcastLog(u, p.id, '[System] Successfully generated the minecraft server world.', 'ok');
+        }
       });
     });
     
@@ -379,6 +393,10 @@ app.post('/api/projects/:id/start', async (req, res) => {
     const proc = cp.spawn(cmd, [mainFile], { cwd: pDir, env: { ...process.env, BOT_TOKEN: p.botToken || '' } });
     procs[p.id] = proc;
 
+    proc.on('error', (err) => {
+      broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err');
+    });
+
     proc.stdout.on('data', d => {
       d.toString().split('\n').forEach(line => {
         if (line.trim()) broadcastLog(u, p.id, line.trim(), 'info');
@@ -387,7 +405,18 @@ app.post('/api/projects/:id/start', async (req, res) => {
     
     proc.stderr.on('data', d => {
       d.toString().split('\n').forEach(line => {
-        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'err');
+        if (!line.trim()) return;
+        if (line.includes('INFO') || line.includes('discord.gateway') || line.includes('discord.client') || line.includes('Logged in as')) {
+          broadcastLog(u, p.id, line.trim(), 'ok');
+        } else {
+          broadcastLog(u, p.id, line.trim(), 'err');
+          if (line.includes("ModuleNotFoundError: No module named")) {
+            const match = line.match(/'([^']+)'/);
+            if (match && match[1]) {
+              broadcastLog(u, p.id, `[System] Missing package detected! Type '${match[1]}' in the Packages box and click Install.`, 'sys');
+            }
+          }
+        }
       });
     });
     
@@ -417,6 +446,19 @@ app.post('/api/projects/:id/stop', (req, res) => {
   p.running = false;
   saveDB();
   broadcastLog(u, p.id, '[System] Process stopped manually.', 'warn');
+  res.json({ success: true });
+});
+
+app.get('/api/admin/data', (req, res) => {
+  res.json({ users: db.users, inviteCodes: db.inviteCodes });
+});
+
+app.post('/api/admin/revoke', (req, res) => {
+  const { code } = req.body;
+  if (db.inviteCodes[code] !== undefined) {
+    delete db.inviteCodes[code];
+    saveDB();
+  }
   res.json({ success: true });
 });
 
