@@ -102,7 +102,7 @@ wss.on('connection', (ws, req) => {
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
           const cmd = p.lang === 'Python' ? `pip install ${data.pkg} --break-system-packages` : `npm install ${data.pkg}`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -186,7 +186,11 @@ app.post('/api/projects', (req, res) => {
     if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
     if (p.files) {
       for (const fname of Object.keys(p.files)) {
-        fs.writeFileSync(path.join(pDir, fname), p.files[fname]);
+        const filePath = path.join(pDir, fname);
+        if (!fs.existsSync(path.dirname(filePath))) {
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        }
+        fs.writeFileSync(filePath, p.files[fname]);
       }
     }
   });
@@ -227,6 +231,23 @@ app.get('/api/projects/:id/dir', (req, res) => {
     }
   } catch(e) {}
   res.json({ success: true, files });
+});
+
+app.get('/api/projects/:id/file', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+  const fname = req.query.name;
+  const target = path.join(PROJECTS_DIR, String(p.id), fname);
+  try {
+    if (fs.existsSync(target)) {
+      const content = fs.readFileSync(target, 'utf8');
+      return res.json({ success: true, content });
+    }
+  } catch(e) {}
+  res.json({ success: false });
 });
 
 app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
@@ -350,14 +371,14 @@ app.post('/api/projects/:id/start', async (req, res) => {
     if (!fs.existsSync(jarPath)) {
       broadcastLog(u, p.id, '[System] Downloading Minecraft server.jar...', 'sys');
       try {
-        cp.execSync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir });
+        cp.execSync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir, shell: true });
         broadcastLog(u, p.id, '[System] Download complete.', 'ok');
       } catch (e) {
         broadcastLog(u, p.id, '[System] Failed to download server.jar', 'err');
       }
     }
     
-    const proc = cp.spawn('java', ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir });
+    const proc = cp.spawn('java', ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true });
     procs[p.id] = proc;
 
     proc.on('error', (err) => {
@@ -388,10 +409,12 @@ app.post('/api/projects/:id/start', async (req, res) => {
         fs.writeFileSync(path.join(pDir, fname), p.files[fname]);
       }
     }
-    const cmd = p.lang === 'Python' ? 'python' : 'node';
+    const cmd = p.lang === 'Python' ? 'python3' : 'node';
     const mainFile = Object.keys(p.files || {})[0] || (p.lang === 'Python' ? 'main.py' : 'index.js');
-    const proc = cp.spawn(cmd, [mainFile], { cwd: pDir, env: { ...process.env, BOT_TOKEN: p.botToken || '' } });
+    const proc = cp.spawn(cmd, [mainFile], { cwd: pDir, env: { ...process.env, BOT_TOKEN: p.botToken || '' }, shell: true });
     procs[p.id] = proc;
+
+    let missingPkgs = new Set();
 
     proc.on('error', (err) => {
       broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err');
@@ -410,17 +433,23 @@ app.post('/api/projects/:id/start', async (req, res) => {
           broadcastLog(u, p.id, line.trim(), 'ok');
         } else {
           broadcastLog(u, p.id, line.trim(), 'err');
-          if (line.includes("ModuleNotFoundError: No module named")) {
-            const match = line.match(/'([^']+)'/);
-            if (match && match[1]) {
-              broadcastLog(u, p.id, `[System] Missing package detected! Type '${match[1]}' in the Packages box and click Install.`, 'sys');
-            }
+          const match = line.match(/ModuleNotFoundError: No module named '([^']+)'/);
+          if (match && match[1]) {
+            missingPkgs.add(match[1]);
           }
         }
       });
     });
     
-    proc.on('close', () => { p.running = false; saveDB(); broadcastLog(u, p.id, '[System] Process exited.', 'sys'); });
+    proc.on('close', () => { 
+      p.running = false; 
+      saveDB(); 
+      if (missingPkgs.size > 0) {
+        broadcastLog(u, p.id, `[System] Missing packages detected! Type the following in the Packages box and click Install:`, 'ok');
+        missingPkgs.forEach(pkg => broadcastLog(u, p.id, pkg, 'ok'));
+      }
+      broadcastLog(u, p.id, '[System] Process exited.', 'sys'); 
+    });
   }
 
   res.json({ success: true });
