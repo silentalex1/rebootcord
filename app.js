@@ -45,6 +45,7 @@ const state = {
 };
 
 let ws;
+
 function connectWS() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(protocol + '//' + location.host);
@@ -52,36 +53,46 @@ function connectWS() {
     try {
       const data = JSON.parse(e.data);
       if (data.event === 'log') {
-        const p = state.projects.find(x => x.id == data.projectId);
+        const p = state.projects.find(x => String(x.id) === String(data.projectId));
         if (!p) return;
         const tgt = p.type === 'minecraft' ? state.mcLogs : state.botLogs;
         tgt.push({ t: getTime(), type: data.type, msg: data.msg });
         trimLogs(tgt);
-        if (state.currentProject && state.currentProject.id == data.projectId) {
+        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
           scheduleRender();
         }
       }
     } catch(err) {}
   };
-  ws.onclose = () => setTimeout(connectWS, 2000);
+  ws.onclose = () => {
+    setTimeout(connectWS, 2000);
+  };
 }
+
 connectWS();
 
 let renderPending = false;
+
 function scheduleRender() {
   if (renderPending) return;
   renderPending = true;
-  requestAnimationFrame(() => { renderPending = false; render(); });
+  requestAnimationFrame(() => {
+    renderPending = false;
+    render();
+  });
 }
 
 function scrollConsolesToBottom() {
   requestAnimationFrame(() => {
-    document.querySelectorAll(".console-body,.mc-console-body").forEach(b => { b.scrollTop = b.scrollHeight; });
+    const bodies = document.querySelectorAll(".console-body,.mc-console-body");
+    bodies.forEach(b => b.scrollTop = b.scrollHeight);
   });
 }
 
 function trimLogs(arr) {
-  if (arr.length > MAX_LOGS) arr.splice(0, arr.length - MAX_LOGS);
+  if (arr.length > MAX_LOGS) {
+    arr.splice(0, arr.length - MAX_LOGS);
+  }
 }
 
 function getTime() {
@@ -91,22 +102,27 @@ function getTime() {
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (k.startsWith('on') && typeof v === 'function') {
+    Object.keys(attrs).forEach(k => {
+      const v = attrs[k];
+      if (k.startsWith("on") && typeof v === "function") {
         node.addEventListener(k.slice(2).toLowerCase(), v);
-      } else if (k === 'className') {
+      } else if (k === "className") {
         node.className = v;
-      } else if (k === 'style' && typeof v === 'object') {
+      } else if (k === "style" && typeof v === "object") {
         Object.assign(node.style, v);
       } else {
         node.setAttribute(k, v);
       }
+    });
+  }
+  children.flat(Infinity).forEach(c => {
+    if (c == null) return;
+    if (typeof c === "string") {
+      node.appendChild(document.createTextNode(c));
+    } else {
+      node.appendChild(c);
     }
-  }
-  for (const child of children.flat(Infinity)) {
-    if (child == null) continue;
-    node.append(typeof child === 'string' ? document.createTextNode(child) : child);
-  }
+  });
   return node;
 }
 
