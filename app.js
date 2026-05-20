@@ -171,12 +171,21 @@ function svgIcon(type, color) {
 }
 
 function highlightCode(text, type) {
-  let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let html = (text || "").replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const isMc = type === 'minecraft';
   const kwColor = isMc ? '#6dbd3d' : '#7289da';
   const strColor = isMc ? '#a8d5a2' : '#9ece6a';
-  html = html.replace(/(import|from|const|let|var|function|async|await|return|if|else|for|while|class|require|def)\b/g, `<span style="color:${kwColor};font-weight:bold">$1</span>`);
-  html = html.replace(/("[^"]*"|'[^']*'|\`[^`]*\`)/g, `<span style="color:${strColor}">$1</span>`);
+  
+  const strings = [];
+  html = html.replace(/("[^"]*"|'[^']*'|\`[^`]*\`)/g, (m) => {
+    strings.push('<span style="color:' + strColor + '">' + m + '</span>');
+    return '__STR' + (strings.length - 1) + '__';
+  });
+  
+  html = html.replace(/\b(import|from|const|let|var|function|async|await|return|if|elif|else|for|while|class|require|def|try|except|catch|pass|True|False|None|null|undefined|new|this)\b/g, '<span style="color:' + kwColor + ';font-weight:bold">$1</span>');
+  
+  html = html.replace(/__STR(\d+)__/g, (m, p1) => strings[parseInt(p1, 10)]);
+  
   return html;
 }
 
@@ -532,10 +541,8 @@ function installPkg() {
 }
 
 function installAllPkgs() {
-  if (!ws || !state.currentProject || state.missingPackages.length === 0) return;
-  state.missingPackages.forEach(pkg => {
-    ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: pkg }));
-  });
+  if (!ws || !state.currentProject) return;
+  ws.send(JSON.stringify({ event: 'installAll', projectId: state.currentProject.id }));
   state.missingPackages = [];
   render();
 }
@@ -600,9 +607,7 @@ function renderBotDashboard() {
   pkgInput.onkeydown = (ev) => { if (ev.key === "Enter") installPkg(); };
 
   let installAllSection = null;
-  if (state.missingPackages && state.missingPackages.length > 0) {
-    installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: installAllPkgs }, svgIcon("download"), " Install All Detected");
-  }
+  installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: installAllPkgs }, svgIcon("download"), " Install All");
 
   const tInput = el("input", { className: "settings-input discord-input", type: "password", id: "tokenInput", placeholder: "Paste your bot token", value: p.botToken || "" });
   const tSaveBtn = el("button", { className: "btn-save discord-btn-sm" }, svgIcon("save"));
@@ -638,6 +643,8 @@ function renderBotDashboard() {
   const hl = el("div", { className: "highlight-layer" });
   
   const lineNums = el("div", { className: "line-numbers" });
+  
+  let editTimeout;
   const updateEditor = () => {
     const count = (state.codeContent.match(/\n/g) || []).length + 1;
     const arr = [];
@@ -645,6 +652,7 @@ function renderBotDashboard() {
     lineNums.innerText = arr.join('\n');
     hl.innerHTML = highlightCode(state.codeContent, p.type);
   };
+  
   updateEditor();
 
   ta.onscroll = () => { 
@@ -652,9 +660,11 @@ function renderBotDashboard() {
     hl.scrollTop = ta.scrollTop;
     hl.scrollLeft = ta.scrollLeft;
   };
+  
   ta.oninput = () => { 
     state.codeContent = ta.value; 
-    updateEditor();
+    clearTimeout(editTimeout);
+    editTimeout = setTimeout(updateEditor, 50);
   };
 
   const editorWrapper = el("div", { className: "editor-wrapper" }, lineNums, el("div", { className: "code-container" }, hl, ta));
@@ -683,7 +693,7 @@ function renderBotDashboard() {
     el("div", { className: "main-area" },
       el("div", { className: "editor-toolbar discord-toolbar" },
         el("span", { className: "editor-filename" }, state.editorFile || mainFile),
-        el("div", { style: { display: "flex" } }, revertCodeBtn, clearCodeBtn, saveFileBtn)
+        el("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px" } }, revertCodeBtn, clearCodeBtn, saveFileBtn)
       ),
       editorWrapper,
       buildConsole()
