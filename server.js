@@ -8,6 +8,9 @@ const cp = require('child_process');
 const axios = require('axios');
 const multer = require('multer');
 const cors = require('cors');
+const util = require('util');
+
+const execAsync = util.promisify(cp.exec);
 
 process.on('uncaughtException', () => {});
 process.on('unhandledRejection', () => {});
@@ -103,9 +106,9 @@ wss.on('connection', (ws, req) => {
         if (p) {
           const pDir = path.join(PROJECTS_DIR, String(p.id));
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-          const cmd = p.lang === 'Python' ? `pip install ${data.pkg} --break-system-packages` : `npm install ${data.pkg}`;
+          const cmd = p.lang === 'Python' ? `pip install ${data.pkg} --target ./modules` : `npm install ${data.pkg}`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -120,9 +123,9 @@ wss.on('connection', (ws, req) => {
         if (p) {
           const pDir = path.join(PROJECTS_DIR, String(p.id));
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-          const cmd = p.lang === 'Python' ? `pip install -r requirements.txt --break-system-packages` : `npm install`;
+          const cmd = p.lang === 'Python' ? `pip install -r requirements.txt --target ./modules` : `npm install`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -363,8 +366,7 @@ app.post('/api/projects/:id/revert', (req, res) => {
   const target = path.join(pDir, bname);
   try {
     if (procs[p.id]) {
-      procs[p.id].stdin.write('stop\n');
-      setTimeout(() => { try { procs[p.id].kill(); } catch(e){} }, 3000);
+      procs[p.id].kill();
       delete procs[p.id];
       p.running = false;
     }
@@ -398,6 +400,26 @@ app.post('/api/projects/:id/start', async (req, res) => {
   saveDB();
 
   if (p.type === 'minecraft') {
+    let javaCmd = 'java';
+    try {
+      await execAsync('java -version');
+    } catch (e) {
+      const jreDir = path.join(PROJECTS_DIR, 'jre');
+      const jreBin = path.join(jreDir, 'bin', 'java');
+      if (!fs.existsSync(jreBin)) {
+        broadcastLog(u, p.id, '[System] Java not found locally. Downloading portable JRE...', 'sys');
+        try {
+          await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR });
+          await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR });
+          await execAsync(`chmod +x ${jreBin}`);
+          broadcastLog(u, p.id, '[System] JRE downloaded successfully.', 'ok');
+        } catch (err) {
+          broadcastLog(u, p.id, '[System] Failed to download JRE: ' + err.message, 'err');
+        }
+      }
+      javaCmd = fs.existsSync(jreBin) ? jreBin : 'java';
+    }
+
     fs.writeFileSync(path.join(pDir, 'eula.txt'), 'eula=true\n');
     fs.writeFileSync(path.join(pDir, 'server.properties'), `server-port=${p.port}\nserver-ip=0.0.0.0\nonline-mode=false\n`);
     
@@ -405,14 +427,14 @@ app.post('/api/projects/:id/start', async (req, res) => {
     if (!fs.existsSync(jarPath)) {
       broadcastLog(u, p.id, '[System] Downloading Minecraft server.jar...', 'sys');
       try {
-        cp.execSync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir, shell: true });
+        await execAsync(`curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar`, { cwd: pDir });
         broadcastLog(u, p.id, '[System] Download complete.', 'ok');
       } catch (e) {
         broadcastLog(u, p.id, '[System] Failed to download server.jar', 'err');
       }
     }
     
-    const proc = cp.spawn('java', ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true });
+    const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir });
     procs[p.id] = proc;
 
     proc.on('error', (err) => {
@@ -449,8 +471,14 @@ app.post('/api/projects/:id/start', async (req, res) => {
     }
     const cmd = p.lang === 'Python' ? 'python3' : 'node';
     const mainFile = Object.keys(p.files || {})[0] || (p.lang === 'Python' ? 'main.py' : 'index.js');
-    const proc = cp.spawn(cmd, [mainFile], { cwd: pDir, env: { ...process.env, BOT_TOKEN: p.botToken || '' }, shell: true });
+    
+    const envVars = { ...process.env, BOT_TOKEN: p.botToken || '', TOKEN: p.botToken || '' };
+    if (p.lang === 'Python') envVars.PYTHONPATH = path.join(pDir, 'modules');
+
+    const proc = cp.spawn(cmd, ['-u', mainFile], { cwd: pDir, env: envVars });
     procs[p.id] = proc;
+
+    let missingPkgs = new Set();
 
     proc.on('error', (err) => {
       broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err');
@@ -471,7 +499,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
           broadcastLog(u, p.id, line.trim(), 'err');
           const match = line.match(/ModuleNotFoundError: No module named '([^']+)'/);
           if (match && match[1]) {
-            broadcastLog(u, p.id, `[System] Missing package detected! Type '${match[1]}' in the Packages box and click Install.`, 'sys');
+            missingPkgs.add(match[1]);
           }
         }
       });
@@ -480,6 +508,10 @@ app.post('/api/projects/:id/start', async (req, res) => {
     proc.on('close', () => { 
       p.running = false; 
       saveDB(); 
+      if (missingPkgs.size > 0) {
+        broadcastLog(u, p.id, `[System] Missing packages detected! Type the following in the Packages box and click Install:`, 'sys');
+        missingPkgs.forEach(pkg => broadcastLog(u, p.id, pkg, 'ok'));
+      }
       broadcastLog(u, p.id, '[System] Process exited.', 'sys'); 
     });
   }
