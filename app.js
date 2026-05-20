@@ -190,7 +190,20 @@ function saveCurrentFile() {
 function switchFile(filename) {
   saveCurrentFile();
   state.editorFile = filename;
-  state.codeContent = (state.currentProject.files && state.currentProject.files[filename]) || "";
+  state.codeContent = "";
+  if (state.currentProject.files && state.currentProject.files[filename]) {
+    state.codeContent = state.currentProject.files[filename];
+  } else {
+    fetch('/api/projects/' + state.currentProject.id + '/file?name=' + encodeURIComponent(filename))
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          state.codeContent = d.content;
+          state.currentProject.files[filename] = d.content;
+          scheduleRender();
+        }
+      });
+  }
   scheduleRender();
 }
 
@@ -426,16 +439,24 @@ function openProject(id) {
   state.mcMods = p._mcMods || [];
   state.mcBackups = p._mcBackups || [];
   state.botLogs = []; state.mcLogs = [];
-  if (p.type === "discord") {
-    state.editorFile = getDefaultFilename(p);
-    state.codeContent = (p.files && p.files[state.editorFile]) || "";
+  fetch('/api/projects/' + id + '/dir').then(r => r.json()).then(d => {
+    if (d.success) {
+      if (p.type === "minecraft") {
+        state.mcFiles = d.files;
+      } else {
+        d.files.forEach(f => {
+          if (!f.isDir && !(f.name in p.files)) {
+            p.files[f.name] = "";
+          }
+        });
+      }
+    }
+    if (p.type === "discord") {
+      state.editorFile = getDefaultFilename(p);
+      state.codeContent = (p.files && p.files[state.editorFile]) || "";
+    }
     render();
-  } else {
-    fetch('/api/projects/' + id + '/dir').then(r => r.json()).then(d => {
-      if (d.success) state.mcFiles = d.files;
-      render();
-    });
-  }
+  });
 }
 
 function deleteProject(id) {
@@ -496,7 +517,17 @@ function renderBotDashboard() {
   if (!projectFiles.includes(mainFile)) projectFiles.unshift(mainFile);
 
   const filesSection = el("div", { className: "sidebar-section" },
-    el("div", { className: "sidebar-label discord-label" }, svgIcon("folder"), " Files")
+    el("div", { className: "sidebar-label discord-label", style: { display: "flex", justifyContent: "space-between", width: "100%" } }, 
+      el("span", {}, svgIcon("folder"), " Files"),
+      el("button", { className: "btn-clear", style: { margin: "0" }, onClick: () => {
+        fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => {
+          if (d.success) {
+            d.files.forEach(f => { if (!f.isDir && !(f.name in p.files)) p.files[f.name] = ""; });
+            render();
+          }
+        });
+      }}, "Refresh")
+    )
   );
 
   projectFiles.forEach(fname => {
@@ -509,9 +540,11 @@ function renderBotDashboard() {
   filesSection.appendChild(el("button", { className: "btn-add-file-small", onClick: () => {
     const name = prompt("New file name (e.g. utils.py):");
     if (name && name.trim()) {
-      state.currentProject.files = state.currentProject.files || {};
-      state.currentProject.files[name.trim()] = "";
-      switchFile(name.trim());
+      fetch('/api/projects/' + p.id + '/touch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: name.trim()}) }).then(() => {
+        state.currentProject.files = state.currentProject.files || {};
+        state.currentProject.files[name.trim()] = "";
+        switchFile(name.trim());
+      });
     }
   }}, svgIcon("plus"), " New File"));
 
@@ -695,9 +728,14 @@ function buildMcFiles(container, p) {
     input.click();
   };
 
+  const refreshBtn = el("button", { className: "btn-upload-mod", style: { background: "transparent", borderColor: "#162016", color: "var(--text-dim)" } }, svgIcon("refresh"), " Refresh");
+  refreshBtn.onclick = () => {
+    fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => { if (d.success) state.mcFiles = d.files; render(); });
+  };
+
   container.appendChild(el("div", { style: { display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"12px", flexWrap:"wrap", gap:"8px" } },
     el("div", { className: "mc-section-title", style: { marginBottom:"0" } }, "Server Files"),
-    upBtn
+    el("div", { style: { display: "flex", gap: "8px" } }, refreshBtn, upBtn)
   ));
 
   const list = el("div", { className: "files-list" });
