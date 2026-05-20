@@ -607,7 +607,9 @@ function renderBotDashboard() {
   pkgInput.onkeydown = (ev) => { if (ev.key === "Enter") installPkg(); };
 
   let installAllSection = null;
-  installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: installAllPkgs }, svgIcon("download"), " Install All");
+  if (state.missingPackages && state.missingPackages.length > 0) {
+    installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: installAllPkgs }, svgIcon("download"), " Install All Detected");
+  }
 
   const tInput = el("input", { className: "settings-input discord-input", type: "password", id: "tokenInput", placeholder: "Paste your bot token", value: p.botToken || "" });
   const tSaveBtn = el("button", { className: "btn-save discord-btn-sm" }, svgIcon("save"));
@@ -675,7 +677,7 @@ function renderBotDashboard() {
       filesSection,
       el("div", { className: "sidebar-section" },
         el("div", { className: "sidebar-label discord-label" }, svgIcon("pkg"), " Packages"),
-        el("div", { style: { display: "flex", gap: "6px" } }, 
+        el("div", { style: { display: "flex", gap: "6px", marginBottom: "8px" } }, 
           pkgInput, 
           el("button", { className: "btn-clear", style: { margin: 0, padding: 0 }, onClick: () => { const i = document.getElementById("pkgInput"); if(i) i.value = ""; } }, svgIcon("trash"))
         ),
