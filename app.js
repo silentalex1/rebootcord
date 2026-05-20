@@ -34,6 +34,7 @@ const state = {
   newMcIp: "",
   editorFile: "",
   codeContent: "",
+  originalCode: "",
   mcView: "overview",
   mcCmd: "",
   botLogs: [],
@@ -202,12 +203,14 @@ function switchFile(filename) {
   state.codeContent = "";
   if (state.currentProject.files && state.currentProject.files[filename] !== undefined) {
     state.codeContent = state.currentProject.files[filename];
+    state.originalCode = state.codeContent;
   } else {
     fetch('/api/projects/' + state.currentProject.id + '/file?name=' + encodeURIComponent(filename))
       .then(r => r.json())
       .then(d => {
         if (d.success) {
           state.codeContent = d.content;
+          state.originalCode = d.content;
           state.currentProject.files[filename] = d.content;
           scheduleRender();
         }
@@ -430,8 +433,9 @@ function createProject() {
   if (p.type === "discord") {
     state.editorFile = getDefaultFilename(p);
     state.codeContent = p.files[state.editorFile];
+    state.originalCode = p.files[state.editorFile];
   } else {
-    state.editorFile = ""; state.codeContent = "";
+    state.editorFile = ""; state.codeContent = ""; state.originalCode = "";
   }
   state.loading = true;
   saveProjects();
@@ -464,6 +468,7 @@ function openProject(id) {
       state.editorFile = getDefaultFilename(p);
       if (p.files[state.editorFile] !== undefined) {
         state.codeContent = p.files[state.editorFile];
+        state.originalCode = p.files[state.editorFile];
         render();
       } else {
         fetch('/api/projects/' + id + '/file?name=' + encodeURIComponent(state.editorFile))
@@ -471,6 +476,7 @@ function openProject(id) {
           .then(d2 => {
             if (d2.success) {
               state.codeContent = d2.content;
+              state.originalCode = d2.content;
               p.files[state.editorFile] = d2.content;
             }
             render();
@@ -517,11 +523,19 @@ function installPkg() {
 
 function installAllPkgs() {
   if (!ws || !state.currentProject || state.missingPackages.length === 0) return;
-  state.missingPackages.forEach(pkg => {
-    ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: pkg }));
-  });
+  const pkgsStr = state.missingPackages.join(" ");
+  ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: pkgsStr }));
   state.missingPackages = [];
   render();
+}
+
+function highlightCode(code, type) {
+  let html = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const color = type === 'minecraft' ? 'var(--mc-bright)' : 'var(--blue-bright)';
+  html = html.replace(/\b(import|from|const|let|var|function|async|await|return|if|else|elif|for|while|class|def|require|module|exports)\b/g, `<span style="color:${color};font-weight:bold">$&</span>`);
+  html = html.replace(/(".*?"|'.*?'|`.*?`)/g, '<span style="color:#e6db74">$&</span>');
+  html = html.replace(/\b(\d+)\b/g, '<span style="color:#ae81ff">$&</span>');
+  return html;
 }
 
 function renderBotDashboard() {
@@ -582,10 +596,13 @@ function renderBotDashboard() {
 
   const pkgInput = el("input", { className: "pkg-input discord-input", id: "pkgInput", placeholder: "package name" });
   pkgInput.onkeydown = (ev) => { if (ev.key === "Enter") installPkg(); };
+  
+  const pkgClearBtn = el("button", { className: "btn-clear", style: { position:"absolute", right:"10px", top:"8px" }, onClick: () => { const inp = document.getElementById('pkgInput'); if(inp) inp.value = ''; } }, svgIcon("trash"));
+  const pkgInputRow = el("div", { className: "pkg-input-row", style: { position:"relative" } }, pkgInput, pkgClearBtn);
 
   let installAllSection = null;
   if (state.missingPackages && state.missingPackages.length > 0) {
-    installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: installAllPkgs }, svgIcon("download"), " Install All Detected");
+    installAllSection = el("button", { className: "btn-install discord-btn", style: { marginTop: "8px", background: "var(--green)", color: "#000" }, onClick: installAllPkgs }, svgIcon("download"), " Install All Detected (" + state.missingPackages.length + ")");
   }
 
   const tInput = el("input", { className: "settings-input discord-input", type: "password", id: "tokenInput", placeholder: "Paste your bot token", value: p.botToken || "" });
@@ -607,11 +624,21 @@ function renderBotDashboard() {
     render();
   }}, svgIcon("trash"), " Clear Code");
 
+  const revertCodeBtn = el("button", { className: "btn-save-file discord-btn-sm", style: { marginRight: "8px", background: "transparent", border: "1px solid var(--border)" }, onClick: () => {
+    if (confirm("Revert to original file code?")) {
+      state.codeContent = state.originalCode || "";
+      saveCurrentFile();
+      render();
+    }
+  }}, svgIcon("revert"), " Revert Code");
+
   const saveFileBtn = el("button", { className: "btn-save-file discord-btn-sm" }, svgIcon("save"), " Save");
   saveFileBtn.onclick = () => { saveCurrentFile(); flashSaveBtn(saveFileBtn); };
 
-  const ta = el("textarea", { className: "code-editor", spellcheck: "false", wrap: "off" });
+  const ta = el("textarea", { className: "code-editor-layer", spellcheck: "false", wrap: "off" });
   ta.value = state.codeContent || "";
+  const pre = el("pre", { className: "syntax-layer" });
+  pre.innerHTML = highlightCode(ta.value, 'discord');
   
   const lineNums = el("div", { className: "line-numbers" });
   const updateLineNums = () => {
@@ -622,13 +649,19 @@ function renderBotDashboard() {
   };
   updateLineNums();
 
-  ta.onscroll = () => { lineNums.scrollTop = ta.scrollTop; };
+  ta.onscroll = () => { 
+    lineNums.scrollTop = ta.scrollTop; 
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  };
   ta.oninput = () => { 
     state.codeContent = ta.value; 
+    pre.innerHTML = highlightCode(ta.value, 'discord');
     updateLineNums();
   };
 
-  const editorWrapper = el("div", { className: "editor-wrapper" }, lineNums, ta);
+  const codeLayerWrapper = el("div", { className: "code-layer-wrapper" }, pre, ta);
+  const editorWrapper = el("div", { className: "editor-wrapper" }, lineNums, codeLayerWrapper);
 
   frag.appendChild(el("div", { className: "dashboard discord-dash" },
     el("div", { className: "sidebar discord-sidebar" },
@@ -636,7 +669,7 @@ function renderBotDashboard() {
       filesSection,
       el("div", { className: "sidebar-section" },
         el("div", { className: "sidebar-label discord-label" }, svgIcon("pkg"), " Packages"),
-        pkgInput,
+        pkgInputRow,
         el("button", { className: "btn-install discord-btn", onClick: installPkg }, svgIcon("download"), " Install"),
         installAllSection
       ),
@@ -651,7 +684,7 @@ function renderBotDashboard() {
     el("div", { className: "main-area" },
       el("div", { className: "editor-toolbar discord-toolbar" },
         el("span", { className: "editor-filename" }, state.editorFile || mainFile),
-        el("div", { style: { display: "flex" } }, clearCodeBtn, saveFileBtn)
+        el("div", { style: { display: "flex" } }, revertCodeBtn, clearCodeBtn, saveFileBtn)
       ),
       editorWrapper,
       buildConsole()
