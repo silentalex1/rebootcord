@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: prysmisai
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # REQUIRED for AI to work on Render:
+      # Go to Render dashboard > Environment and set GEMINI_API_KEY to your key.
+      # This makes /v1/chat/completions (used by the PrysmisAI helper chat) return real AI responses.
+      # The local Ollama vision model (prysmis-ai) is for self-hosted deploys only (needs GPU/RAM for llava).
+      - key: GEMINI_API_KEY
+        sync: false
+      # Optional: point to a remote Ollama instance instead (e.g. your local via ngrok or a GPU host)
+      - key: OLLAMA_BASE_URL
+        sync: false
+      - key: OLLAMA_VISION_MODEL
+        value: prysmis-ai
+      - key: AI_PROVIDER
+        value: auto
+    # For persistent projects_data and uploads (recommended for full features):
+    # Upgrade plan and add a Disk in Render dashboard, mounted at ./projects_data and ./uploads
+    # Free tier: data resets on each deploy/restart. AI chat works regardless.
