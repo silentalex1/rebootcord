@@ -317,6 +317,16 @@ app.post('/api/createcode', (req, res) => {
   res.json({ success: true });
 });
 
+app.post('/api/bot/validate', (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.json({ valid: false, reason: 'No code provided' });
+  if (!code.startsWith('rebootcord-')) return res.json({ valid: false, reason: 'Invalid code format' });
+  const parts = code.split('-');
+  if (parts.length !== 3 || parts[1].length !== 5 || parts[2].length !== 7) return res.json({ valid: false, reason: 'Invalid code structure' });
+  if (db.inviteCodes[code] === undefined) return res.json({ valid: false, reason: 'Code not found in database' });
+  res.json({ valid: true, boundTo: db.inviteCodes[code] });
+});
+
 app.get('/api/stats', (req, res) => {
   res.json({ activeUsers: db.users.length, totalInvites: Object.keys(db.inviteCodes).length });
 });
