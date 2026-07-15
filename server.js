@@ -9,6 +9,9 @@ const axios = require('axios');
 const multer = require('multer');
 const cors = require('cors');
 const util = require('util');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const bcrypt = require('bcrypt');
 
 const execAsync = util.promisify(cp.exec);
 
@@ -20,7 +23,40 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 const upload = multer({ dest: 'uploads/' });
 
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  hsts: process.env.NODE_ENV === 'production' ? {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  } : false
+}));
 app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { success: false, message: 'Too many requests, please try again later.' }
+});
+app.use('/api/', limiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { success: false, message: 'Too many login attempts, please try again later.' }
+});
+app.use('/login', authLimiter);
+app.use('/register', authLimiter);
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { success: false, message: 'Too many API requests, please try again later.' }
+});
+app.use('/api/createcode', apiLimiter);
 
 const DB_FILE = path.join(__dirname, 'db.json');
 const PROJECTS_DIR = path.join(__dirname, 'projects_data');
@@ -161,6 +197,15 @@ function signToken(username) {
   return payload + '.' + sig;
 }
 
+function isValidUsername(username) {
+  return typeof username === 'string' && username.length >= 3 && username.length <= 20 && /^[a-zA-Z0-9_]+$/.test(username);
+}
+
+function sanitizeInput(input) {
+  if (typeof input !== 'string') return '';
+  return input.replace(/[<>\"'&]/g, '');
+}
+
 function verifyToken(token) {
   if (!token) return null;
   const parts = token.split('.');
@@ -185,7 +230,8 @@ function parseCookies(req) {
 function getUser(req) { const c = verifyToken(parseCookies(req)['rc_tok']); if (c) return c; const h = (req.headers['authorization'] || req.headers['Authorization'] || ''); if (h.startsWith('rc_live_')) { const hash = require('crypto').createHash('sha256').update(h).digest('hex'); const k = (db.apiKeys || []).find(x => x.keyHash === hash); if (k) return k.username; } return null; }
 
 function setCookie(res, token) {
-  res.setHeader('Set-Cookie', 'rc_tok=' + token + '; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800');
+  const isSecure = process.env.NODE_ENV === 'production';
+  res.setHeader('Set-Cookie', 'rc_tok=' + token + '; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800' + (isSecure ? '; Secure' : ''));
 }
 
 function clearCookie(res) {
@@ -303,7 +349,6 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => wsClients.delete(ws));
 });
 
-app.use(express.json({ limit: '50mb' }));
 app.use(express.static(__dirname, { index: false }));
 app.use('/sdk', express.static(path.join(__dirname, 'sdk')));
 
@@ -344,30 +389,35 @@ app.get('/dashboard/*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dashboard.html'));
 });
 
-app.post('/register', (req, res) => {
-  const { username, password, invite } = req.body;
-  if (!username || !password || !invite) return res.json({ success: false, message: 'All fields required' });
+app.post('/register', async (req, res) => {
+  const { username, password, invite, discordUsername } = req.body;
+  if (!username || !password || !invite || !discordUsername) return res.json({ success: false, message: 'All fields required' });
+  if (!isValidUsername(username)) return res.json({ success: false, message: 'Username must be 3-20 alphanumeric characters' });
+  if (password.length < 8) return res.json({ success: false, message: 'Password must be at least 8 characters' });
+  if (discordUsername.length < 2 || discordUsername.length > 32) return res.json({ success: false, message: 'Invalid Discord username' });
   const code = invite.startsWith('rebootcord-') ? invite : 'rebootcord-' + invite;
   if (db.blacklisted.includes(code) || db.blacklisted.includes(username)) return res.json({ success: false, message: 'Blacklisted' });
   if (!db.inviteCodes[code]) return res.json({ success: false, message: 'Invalid invite code' });
-  if (db.inviteCodes[code] !== true && db.inviteCodes[code] !== username) return res.json({ success: false, message: 'Invite code is bound to your Discord Username only' });
+  if (db.inviteCodes[code] !== true && db.inviteCodes[code] !== discordUsername) return res.json({ success: false, message: 'Invite code is bound to a different Discord username' });
   if (db.users.find(u => u.username === username)) return res.json({ success: false, message: 'Username taken' });
-  db.users.push({ username, password, invite: code, projects: [], admin: false });
+  const hashedPassword = await bcrypt.hash(password, 10);
+  db.users.push({ username, password: hashedPassword, invite: code, discordUsername, projects: [], admin: false });
   delete db.inviteCodes[code];
   saveDB();
   setCookie(res, signToken(username));
   res.json({ success: true, username });
 });
 
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   const { username, password } = req.body;
-  const user = db.users.find(u => u.username === username && u.password === password);
-  if (user && !db.blacklisted.includes(username)) {
-    setCookie(res, signToken(username));
-    res.json({ success: true, username });
-  } else {
-    res.json({ success: false, message: 'Invalid credentials' });
-  }
+  if (!username || !password) return res.json({ success: false, message: 'All fields required' });
+  const user = db.users.find(u => u.username === username);
+  if (!user) return res.json({ success: false, message: 'Invalid credentials' });
+  const validPassword = await bcrypt.compare(password, user.password);
+  if (!validPassword) return res.json({ success: false, message: 'Invalid credentials' });
+  if (db.blacklisted.includes(username)) return res.json({ success: false, message: 'Account blacklisted' });
+  setCookie(res, signToken(username));
+  res.json({ success: true, username });
 });
 
 app.post('/logout', (req, res) => {
@@ -420,7 +470,12 @@ app.post('/api/projects', (req, res) => {
 
 app.post('/api/createcode', (req, res) => {
   const { code, user } = req.body;
-  if (code) { db.inviteCodes[code] = user || true; saveDB(); }
+  if (!code || !code.startsWith('rebootcord-')) return res.json({ success: false, message: 'Invalid code format' });
+  const parts = code.split('-');
+  if (parts.length !== 3 || parts[1].length !== 5 || parts[2].length !== 7) return res.json({ success: false, message: 'Invalid code structure' });
+  if (user && (typeof user !== 'string' || user.length < 2 || user.length > 32)) return res.json({ success: false, message: 'Invalid username' });
+  db.inviteCodes[code] = user || true;
+  saveDB();
   res.json({ success: true });
 });
 
@@ -1362,6 +1417,15 @@ app.post('/api/v1/feedback-reply', (req, res) => {
     saveDB();
   }
   res.json({ success: true });
+});
+
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({ success: false, message: 'Internal server error' });
+});
+
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: 'Not found' });
 });
 
 const PORT = process.env.PORT || 1000;
