@@ -74,16 +74,12 @@ body::after{content:'';position:fixed;inset:0;background-image:repeating-linear-
     <div id="register-tab" class="tab-content active">
       <div class="form-title">Create your account</div>
       <div class="field">
-        <label class="field-label">Username</label>
-        <input class="field-input" id="reg-username" type="text" placeholder="Enter your username" autocomplete="username">
+        <label class="field-label">Discord Username</label>
+        <input class="field-input" id="discord-username" type="text" placeholder="Enter your Discord username" autocomplete="username">
       </div>
       <div class="field">
         <label class="field-label">Password</label>
         <input class="field-input" id="reg-password" type="password" placeholder="Enter your password" autocomplete="new-password">
-      </div>
-      <div class="field">
-        <label class="field-label">Discord Username</label>
-        <input class="field-input" id="discord-username" type="text" placeholder="Enter your Discord username">
       </div>
       <div class="field">
         <label class="field-label">Invite Code</label>
@@ -97,8 +93,8 @@ body::after{content:'';position:fixed;inset:0;background-image:repeating-linear-
     <div id="login-tab" class="tab-content">
       <div class="form-title">Login to your account</div>
       <div class="field">
-        <label class="field-label">Username</label>
-        <input class="field-input" id="login-username" type="text" placeholder="Enter your username" autocomplete="username">
+        <label class="field-label">Discord Username</label>
+        <input class="field-input" id="login-username" type="text" placeholder="Enter your Discord username" autocomplete="username">
       </div>
       <div class="field">
         <label class="field-label">Password</label>
@@ -127,18 +123,17 @@ function setMsg(id, text, type) {
 
 async function handleRegister() {
   const btn = document.getElementById('reg-btn');
-  const username = document.getElementById('reg-username').value.trim();
-  const password = document.getElementById('reg-password').value.trim();
   const discordUsername = document.getElementById('discord-username').value.trim();
+  const password = document.getElementById('reg-password').value.trim();
   const invite = document.getElementById('invite-code').value.trim();
-  if (!username || !password || !invite || !discordUsername) { setMsg('reg-msg', 'All fields are required.', 'error'); return; }
+  if (!discordUsername || !password || !invite) { setMsg('reg-msg', 'All fields are required.', 'error'); return; }
   btn.textContent = 'Creating...';
   btn.disabled = true;
   try {
     const res = await fetch('/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, invite, discordUsername })
+      body: JSON.stringify({ username: discordUsername, password, invite, discordUsername })
     });
     const data = await res.json();
     if (data.success) {
@@ -159,16 +154,16 @@ async function handleRegister() {
 
 async function handleLogin() {
   const btn = document.getElementById('login-btn');
-  const username = document.getElementById('login-username').value.trim();
+  const discordUsername = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value.trim();
-  if (!username || !password) { setMsg('login-msg', 'All fields are required.', 'error'); return; }
+  if (!discordUsername || !password) { setMsg('login-msg', 'All fields are required.', 'error'); return; }
   btn.textContent = 'Logging in...';
   btn.disabled = true;
   try {
     const res = await fetch('/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify({ username: discordUsername, password })
     });
     const data = await res.json();
     if (data.success) {
