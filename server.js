@@ -10,7 +10,7 @@ const multer = require('multer');
 const cors = require('cors');
 const util = require('util');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+const expressRateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
 
 const execAsync = util.promisify(cp.exec);
@@ -36,14 +36,14 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-const limiter = rateLimit({
+const limiter = expressRateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   message: { success: false, message: 'Too many requests, please try again later.' }
 });
 app.use('/api/', limiter);
 
-const authLimiter = rateLimit({
+const authLimiter = expressRateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   message: { success: false, message: 'Too many login attempts, please try again later.' }
@@ -51,7 +51,7 @@ const authLimiter = rateLimit({
 app.use('/login', authLimiter);
 app.use('/register', authLimiter);
 
-const apiLimiter = rateLimit({
+const apiLimiter = expressRateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   message: { success: false, message: 'Too many API requests, please try again later.' }
