@@ -21,7 +21,19 @@ process.on('unhandledRejection', () => {});
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ 
+  dest: 'uploads/',
+  limits: { fileSize: 200 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.js', '.py', '.json', '.txt', '.md', '.jar', '.zip', '.tar', '.gz', '.html', '.css', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.env', '.sh', '.bat', '.ps1', '.ts', '.tsx', '.jsx', '.vue', '.svelte', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.hpp', '.php', '.rb', '.swift', '.kt', '.xml', '.sql', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.eot'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext) || !ext) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type'));
+    }
+  }
+});
 
 app.use(helmet({
   contentSecurityPolicy: false,
@@ -198,7 +210,7 @@ function signToken(username) {
 }
 
 function isValidUsername(username) {
-  return typeof username === 'string' && username.length >= 3 && username.length <= 20 && /^[a-zA-Z0-9_]+$/.test(username);
+  return typeof username === 'string' && username.length >= 2 && username.length <= 32 && /^[a-zA-Z0-9_]+$/.test(username);
 }
 
 function sanitizeInput(input) {
@@ -284,9 +296,9 @@ wss.on('connection', (ws, req) => {
             const modulesDir = path.join(pDir, 'modules');
             if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
           }
-          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input "${pkg}" --target ./modules` : `npm install --no-audit --no-fund "${pkg}"`;
+          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary "${pkg}" --target ./modules` : `npm install --no-audit --no-fund --prefer-offline "${pkg}"`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 5 * 60 * 1000, maxBuffer: 1024 * 1024 * 20 }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 8 * 60 * 1000, maxBuffer: 1024 * 1024 * 30 }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -333,9 +345,9 @@ wss.on('connection', (ws, req) => {
             broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: true, count: 0 });
             return;
           }
-          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input -r requirements.txt --target ./modules` : `npm install --no-audit --no-fund`;
+          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary -r requirements.txt --target ./modules` : `npm install --no-audit --no-fund --prefer-offline --no-package-lock`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 40 }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -391,17 +403,16 @@ app.get('/dashboard/*', (req, res) => {
 
 app.post('/register', async (req, res) => {
   const { username, password, invite, discordUsername } = req.body;
-  if (!username || !password || !invite || !discordUsername) return res.json({ success: false, message: 'All fields required' });
-  if (!isValidUsername(username)) return res.json({ success: false, message: 'Username must be 3-20 alphanumeric characters' });
+  if (!username || !password || !invite) return res.json({ success: false, message: 'All fields required' });
+  if (!isValidUsername(username)) return res.json({ success: false, message: 'Discord username must be 2-32 characters' });
   if (password.length < 8) return res.json({ success: false, message: 'Password must be at least 8 characters' });
-  if (discordUsername.length < 2 || discordUsername.length > 32) return res.json({ success: false, message: 'Invalid Discord username' });
   const code = invite.startsWith('rebootcord-') ? invite : 'rebootcord-' + invite;
   if (db.blacklisted.includes(code) || db.blacklisted.includes(username)) return res.json({ success: false, message: 'Blacklisted' });
   if (!db.inviteCodes[code]) return res.json({ success: false, message: 'Invalid invite code' });
-  if (db.inviteCodes[code] !== true && db.inviteCodes[code] !== discordUsername) return res.json({ success: false, message: 'Invite code is bound to a different Discord username' });
-  if (db.users.find(u => u.username === username)) return res.json({ success: false, message: 'Username taken' });
+  if (db.inviteCodes[code] !== true && db.inviteCodes[code] !== username) return res.json({ success: false, message: 'Invite code is bound to a different Discord username' });
+  if (db.users.find(u => u.username === username)) return res.json({ success: false, message: 'Discord username already registered' });
   const hashedPassword = await bcrypt.hash(password, 10);
-  db.users.push({ username, password: hashedPassword, invite: code, discordUsername, projects: [], admin: false });
+  db.users.push({ username, password: hashedPassword, invite: code, discordUsername: username, projects: [], admin: false });
   delete db.inviteCodes[code];
   saveDB();
   setCookie(res, signToken(username));
@@ -412,9 +423,9 @@ app.post('/login', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.json({ success: false, message: 'All fields required' });
   const user = db.users.find(u => u.username === username);
-  if (!user) return res.json({ success: false, message: 'Invalid credentials' });
+  if (!user) return res.json({ success: false, message: 'Invalid Discord username or password' });
   const validPassword = await bcrypt.compare(password, user.password);
-  if (!validPassword) return res.json({ success: false, message: 'Invalid credentials' });
+  if (!validPassword) return res.json({ success: false, message: 'Invalid Discord username or password' });
   if (db.blacklisted.includes(username)) return res.json({ success: false, message: 'Account blacklisted' });
   setCookie(res, signToken(username));
   res.json({ success: true, username });
@@ -833,12 +844,22 @@ app.post('/api/projects/:id/stop', (req, res) => {
   if (!p) return res.json({ success: false });
 
   if (procs[p.id]) {
-    try { procs[p.id].kill('SIGTERM'); setTimeout(()=>{ try{ if(procs[p.id]) procs[p.id].kill('SIGKILL'); }catch(e){} }, 800); } catch(e) {}
-    delete procs[p.id];
+    try {
+      const proc = procs[p.id];
+      proc.kill('SIGTERM');
+      setTimeout(() => {
+        try {
+          if (procs[p.id]) {
+            procs[p.id].kill('SIGKILL');
+            delete procs[p.id];
+          }
+        } catch(e) {}
+      }, 2000);
+    } catch(e) {}
   }
   p.running = false;
   saveDB();
-  broadcastLog(u, p.id, '[System] Process stopped manually.', 'warn');
+  broadcastLog(u, p.id, '[System] Process stopped.', 'warn');
   res.json({ success: true });
 });
 
@@ -851,14 +872,57 @@ app.post('/api/projects/:id/kill', (req, res) => {
   if (!p) return res.json({ success: false });
 
   if (procs[p.id]) {
-    try { procs[p.id].kill('SIGKILL'); } catch(e) {}
-    delete procs[p.id];
+    try {
+      const proc = procs[p.id];
+      proc.kill('SIGKILL');
+      setTimeout(() => {
+        try {
+          if (procs[p.id]) {
+            delete procs[p.id];
+          }
+        } catch(e) {}
+      }, 500);
+    } catch(e) {}
   }
 
   p.running = false;
   saveDB();
   broadcastLog(u, p.id, '[System] Process forcefully killed.', 'warn');
   res.json({ success: true });
+});
+
+app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  if (!user) return res.json({ success: false });
+  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+  if (!req.file) return res.json({ success: false });
+
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+
+  const relPath = req.body.relPath || req.file.originalname;
+  const targetPath = path.join(pDir, relPath);
+  const targetDir = path.dirname(targetPath);
+
+  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+  try {
+    if (fs.existsSync(targetPath)) {
+      fs.unlinkSync(targetPath);
+    }
+    fs.renameSync(req.file.path, targetPath);
+    res.json({ success: true });
+  } catch (e) {
+    try {
+      if (fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (cleanupError) {}
+    res.json({ success: false });
+  }
 });
 
 app.get('/api/admin/data', (req, res) => {
