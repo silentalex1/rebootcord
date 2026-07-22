@@ -565,8 +565,11 @@ app.post('/api/projects/:id/unshare', (req, res) => {
   if (!user) return res.json({ success: false });
   const p = (user.projects || []).find(x => String(x.id) === req.params.id);
   if (!p) return res.json({ success: false });
-  p.shared = (p.shared || []).filter(x => x.username !== req.body.username);
-  delete unlockedAccess[req.body.username + '::' + req.params.id];
+  const removedUser = req.body.username;
+  p.shared = (p.shared || []).filter(x => x.username !== removedUser);
+  delete unlockedAccess[removedUser + '::' + req.params.id];
+  db.inboxMessages = db.inboxMessages || [];
+  db.inboxMessages.unshift({ id: Date.now(), title: `Removed from project`, body: `${user.username} has removed you from their project.`, ts: Date.now(), readBy: [], sender: user.username, rank: 'staff' });
   saveDB();
   res.json({ success: true, shared: p.shared });
 });
@@ -641,7 +644,9 @@ app.get('/api/inbox', (req, res) => {
   if (!u) return res.json({ success: false, messages: [] });
   const msgs = (db.inboxMessages || []).map(m => ({
     id: m.id, title: m.title, body: m.body, ts: m.ts,
-    read: (m.readBy || []).includes(u)
+    read: (m.readBy || []).includes(u),
+    sender: m.sender,
+    rank: m.rank
   }));
   res.json({ success: true, messages: msgs });
 });
@@ -667,6 +672,16 @@ app.post('/api/inbox/send', (req, res) => {
   if (!title || !body) return res.json({ success: false });
   db.inboxMessages = db.inboxMessages || [];
   db.inboxMessages.unshift({ id: Date.now(), title, body, ts: Date.now(), readBy: [] });
+  saveDB();
+  res.json({ success: true });
+});
+
+app.post('/api/inbox/discord', (req, res) => {
+  const message = (req.body.message || '').trim();
+  const sender = (req.body.sender || 'Staff').trim();
+  if (!message) return res.json({ success: false });
+  db.inboxMessages = db.inboxMessages || [];
+  db.inboxMessages.unshift({ id: Date.now(), title: `Message from ${sender}`, body: message, ts: Date.now(), readBy: [], sender, rank: 'staff' });
   saveDB();
   res.json({ success: true });
 });
