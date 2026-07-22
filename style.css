@@ -551,14 +551,22 @@ input,textarea,select{font-family:var(--font)}
 .inbox-notification-btn:hover{background:var(--red-dark);transform:translateY(-2px)}
 
 @media(max-width:768px){
+  html,body{overflow-x:hidden}
   .projects-page{padding:20px 16px}
-  .projects-header{flex-direction:column;align-items:flex-start;margin-bottom:20px}
+  .projects-header{flex-direction:column;align-items:flex-start;margin-bottom:20px;width:100%}
   .projects-title h1{font-size:20px}
   .projects-title p{font-size:12px}
-  .btn-new{width:100%;justify-content:center}
+  .projects-header-actions{flex-wrap:wrap;width:100%;gap:8px}
+  .projects-header-actions .search-input{order:-1;flex:1 1 100%;width:100%}
+  .projects-header-actions .btn-changelogs{flex:1 1 auto;white-space:nowrap;text-align:center;padding:9px 12px;font-size:12px}
+  .btn-new{width:100%;justify-content:center;flex:1 1 100%}
   .projects-grid{grid-template-columns:1fr}
   .search-input{width:100%;min-width:0}
-  .nav{padding:0 16px;height:56px}
+  .nav{padding:0 14px;height:56px}
+  .nav-logo{font-size:15px}
+  .nav-right{gap:8px}
+  .nav-user{font-size:12px;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .btn-logout-nav{padding:7px 10px;font-size:12px}
   .api-layout{flex-direction:column;gap:20px}
   .api-nav-sidebar{width:100%;position:static;max-height:none;overflow:visible}
   .api-nav-sticky{position:static;max-height:none;overflow:visible}
