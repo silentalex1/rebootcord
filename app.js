@@ -103,7 +103,9 @@ const state = {
   settingsMemberFullAccess: false,
   projectAccess: null,
   needsProjectPassword: false,
-  projectUnlockInput: ""
+  projectUnlockInput: "",
+  inboxUnread: false,
+  showInboxNotification: false
 };
 
 let ws;
@@ -186,6 +188,19 @@ function trimLogs(arr) {
 
 function getTime() {
   return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function checkInbox() {
+  fetch('/api/inbox').then(r => r.json()).then(data => {
+    if (data.success && data.messages) {
+      const unread = data.messages.filter(m => !m.read);
+      if (unread.length > 0 && !state.showInboxNotification) {
+        state.inboxUnread = true;
+        state.showInboxNotification = true;
+        scheduleRender();
+      }
+    }
+  });
 }
 
 function detectDependencies(code, lang) {
@@ -412,6 +427,23 @@ function renderAIChatButton() {
     el("div", { className: "ai-chat-button-icon" }, svgIcon("ai"))
   );
   return btn;
+}
+
+function renderInboxNotification() {
+  if (!state.showInboxNotification) return null;
+  const overlay = el("div", { className: "inbox-notification-overlay" },
+    el("div", { className: "inbox-notification-box" },
+      el("div", { className: "inbox-notification-header" },
+        el("div", { className: "inbox-notification-badge" }, "unread"),
+        el("button", { className: "inbox-notification-close", onClick: () => { state.showInboxNotification = false; scheduleRender(); } }, "×")
+      ),
+      el("div", { className: "inbox-notification-content" },
+        el("div", { className: "inbox-notification-title" }, "New inbox message has been posted!"),
+        el("button", { className: "inbox-notification-btn", onClick: () => { window.location.href = "/inbox"; } }, "check it out")
+      )
+    )
+  );
+  return overlay;
 }
 
 function renderAIChatUI() {
@@ -1108,6 +1140,9 @@ function render() {
   }
   if (state.showAIChat) {
     document.body.appendChild(renderAIChatUI());
+  }
+  if (state.showInboxNotification) {
+    document.body.appendChild(renderInboxNotification());
   }
   scrollConsolesToBottom();
 }
@@ -2824,6 +2859,7 @@ fetch("/api/me").then(r => r.json()).then(d => {
   }
   fetch("/api/projects").then(r => r.json()).then(pd => {
     if (pd && pd.projects) state.projects = pd.projects;
+    checkInbox();
     const path = window.location.pathname || '';
     if (path === '/ourapi' || path === '/dashboard/ourapi') {
       state.page = 'ourapi';
