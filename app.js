@@ -103,7 +103,9 @@ const state = {
   needsProjectPassword: false,
   projectUnlockInput: "",
   inboxUnread: false,
-  showInboxNotification: false
+  showInboxNotification: false,
+  shareInvites: [],
+  showShareInviteNotification: false
 };
 
 let ws;
@@ -198,6 +200,33 @@ function checkInbox() {
         scheduleRender();
       }
     }
+  });
+}
+
+function checkShareInvites() {
+  fetch('/api/share-invites').then(r => r.json()).then(data => {
+    if (data.success && data.invites && data.invites.length) {
+      state.shareInvites = data.invites;
+      state.showShareInviteNotification = true;
+      scheduleRender();
+    }
+  }).catch(() => {});
+}
+
+function acknowledgeShareInvite(invite) {
+  fetch('/api/share-invites/ack', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: invite.id })
+  }).finally(() => {
+    state.shareInvites = state.shareInvites.filter(x => x.id !== invite.id);
+    if (state.shareInvites.length === 0) state.showShareInviteNotification = false;
+    fetch('/api/projects').then(r => r.json()).then(pd => {
+      if (pd && pd.projects) state.projects = pd.projects;
+      state.page = 'projects';
+      history.pushState(null, '', '/dashboard');
+      scheduleRender();
+    }).catch(() => scheduleRender());
   });
 }
 
@@ -438,6 +467,24 @@ function renderInboxNotification() {
       el("div", { className: "inbox-notification-content" },
         el("div", { className: "inbox-notification-title" }, "New inbox message has been posted!"),
         el("button", { className: "inbox-notification-btn", onClick: () => { window.location.href = "/inbox"; } }, "check it out")
+      )
+    )
+  );
+  return overlay;
+}
+
+function renderShareInviteNotification() {
+  if (!state.showShareInviteNotification || !state.shareInvites || !state.shareInvites.length) return null;
+  const invite = state.shareInvites[0];
+  const overlay = el("div", { className: "inbox-notification-overlay" },
+    el("div", { className: "inbox-notification-box" },
+      el("div", { className: "inbox-notification-header" },
+        el("div", { className: "inbox-notification-badge" }, "shared"),
+        el("button", { className: "inbox-notification-close", onClick: () => { acknowledgeShareInvite(invite); } }, "×")
+      ),
+      el("div", { className: "inbox-notification-content" },
+        el("div", { className: "inbox-notification-title" }, invite.sender + " has shared their " + invite.projectName + " with you!"),
+        el("button", { className: "inbox-notification-btn", onClick: () => { acknowledgeShareInvite(invite); } }, "okay")
       )
     )
   );
@@ -1142,6 +1189,9 @@ function render() {
   if (state.showInboxNotification) {
     document.body.appendChild(renderInboxNotification());
   }
+  if (state.showShareInviteNotification) {
+    document.body.appendChild(renderShareInviteNotification());
+  }
   scrollConsolesToBottom();
 }
 
@@ -1188,7 +1238,7 @@ function renderProjectsPage() {
         el("p", {}, "Manage your Discord bots and Minecraft servers"),
         el("div", { style: { fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" } }, state.projects.length + " projects • " + (state.projects.filter(function(x){ return x.running; }).length) + " running")
       ),
-      el("div", { style: { display: "flex", gap: "10px", alignItems: "center" } },
+      el("div", { className: "projects-header-actions", style: { display: "flex", gap: "10px", alignItems: "center" } },
         el("input", { className: "search-input", placeholder: "Search project or press ctrl+k", value: state.searchTerm, oninput: function(e){ 
           state.searchTerm = e.target.value; 
           if (searchTimeout) clearTimeout(searchTimeout);
@@ -2356,6 +2406,7 @@ function renderOurApi() {
     { id: "hosting-magic", label: "Hosting Magic", icon: "magic" },
     { id: "api-endpoints", label: "API Endpoints", icon: "endpoint" },
     { id: "sdks-autostyling", label: "SDK AutoStyling", icon: "style" },
+    { id: "device-detection", label: "Device Detection", icon: "shield" },
     { id: "javascript", label: "Javascript", icon: "code" },
     { id: "ai-integration", label: "AI Integration", icon: "ai" }
   ];
@@ -2461,7 +2512,8 @@ function renderOurApi() {
         { method: "POST", path: "/api/v1/deploy", desc: "Hook your site project so it sends calls to the API provided. You can just sit back and watch the host magic happen in real time. Use your rc_live_ key in the request for auth.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }, { name: "projectId", type: "body", desc: "Your project ID" }] },
         { method: "POST", path: "/api/v1/apikeys", desc: "Create a new API key for your apps. Full key returned once only — use masked rc_****** in lists. Copy button gives full key for recent even when hidden.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }] },
         { method: "GET", path: "/api/v1/apikeys", desc: "List your API keys. Returns masked versions for security. Use the copy button on the dashboard to get the full key.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }] },
-        { method: "POST", path: "/api/v1/feedback", desc: "Submit user feedback or suggestion from your site or tools. Requires rc_live_ key. Rate limited.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }, { name: "message", type: "body", desc: "The feedback text" }] }
+        { method: "POST", path: "/api/v1/feedback", desc: "Submit user feedback or suggestion from your site or tools. Requires rc_live_ key. Rate limited.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }, { name: "message", type: "body", desc: "The feedback text" }] },
+        { method: "GET", path: "/api/v1/device", desc: "Detect a visitor's device type, OS, and browser from the request. Powers the RebootDevice SDK, or call it directly for server-side rendering decisions.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }] }
       ];
       endpoints.forEach(function(ep) {
         const card = el("div", { className: "api-endpoint-card" },
@@ -2525,6 +2577,60 @@ function renderOurApi() {
       });
       d.appendChild(el("div", { className: "api-sub-heading", style: { marginTop: "20px" } }, "What you get"));
       d.appendChild(feats);
+      return d;
+    } },
+    { id: "device-detection", label: "Device Detection", content: function() {
+      const d = el("div", { className: "api-section-body" });
+      d.appendChild(el("p", { className: "api-section-desc" }, "Accurately detect what device a visitor is on — mobile, tablet, desktop, TV, game console, or bot — and show a smooth top-of-page notification while your layout adapts."));
+
+      function codeBlock(label, code, lang) {
+        const wrap = el("div", { className: "api-code-block" });
+        const header = el("div", { className: "api-code-header" },
+          el("span", { className: "api-code-lang" }, lang || "html"),
+          el("button", { className: "api-code-copy", onClick: function() { navigator.clipboard.writeText(code); this.textContent = "copied!"; setTimeout(() => { this.textContent = "copy"; }, 900); } }, "copy")
+        );
+        if (label) wrap.appendChild(el("div", { className: "api-code-label" }, label));
+        wrap.appendChild(header);
+        const pre = el("div", { className: "api-code-pre" }, code);
+        wrap.appendChild(pre);
+        return wrap;
+      }
+
+      d.appendChild(codeBlock("1. Include the script", '<script src="https://rebootcord.world/sdk/rebootdevice.js"></script>', "html"));
+      d.appendChild(codeBlock("2. Initialize", 'RebootDevice.init({ apiKey: "YOUR_API_KEY" });', "js"));
+      d.appendChild(codeBlock("3. Style using the applied class", '.rc-device-mobile .sidebar { display: none; }\n.rc-device-mobile .card { padding: 12px; }', "css"));
+
+      d.appendChild(el("div", { className: "api-sub-heading", style: { marginTop: "20px" } }, "What happens automatically"));
+      const stepsWrap = el("div", { className: "api-steps" });
+      [
+        { n: "01", title: "Detects the device", desc: "Combines user-agent parsing with touch/screen-size feature detection for accuracy across mobile, tablet, desktop, TV, and console." },
+        { n: "02", title: "Shows a notification", desc: "A green banner slides in top-middle: \"Detecting user device type\", then updates to \"User is on <device>\", then \"Now refresh the page so it fits for <device>.\"" },
+        { n: "03", title: "Applies a CSS class", desc: "Adds rc-device-mobile / rc-device-tablet / rc-device-desktop / rc-device-tv / rc-device-console to your root element so your CSS can adapt." }
+      ].forEach(function(s) {
+        stepsWrap.appendChild(el("div", { className: "api-step" },
+          el("div", { className: "api-step-num" }, s.n),
+          el("div", { className: "api-step-body" },
+            el("div", { className: "api-step-title" }, s.title),
+            el("div", { className: "api-step-desc" }, s.desc)
+          )
+        ));
+      });
+      d.appendChild(stepsWrap);
+
+      d.appendChild(el("div", { className: "api-sub-heading", style: { marginTop: "20px" } }, "API reference"));
+      const methods = [
+        { name: "RebootDevice.init(opts)", desc: "apiKey (optional, cross-checks server-side), root (CSS selector, default <html>), silent (skip the banner), autoRefresh (auto-reload after detecting), onDetected(info)." },
+        { name: "RebootDevice.getDevice()", desc: "Returns the last detected { type, os, browser }." },
+        { name: "GET /api/v1/device", desc: "Server-side detection endpoint. Send Authorization: YOUR_API_KEY. Returns { type, os, browser }." }
+      ];
+      const list = el("div", { className: "api-methods-list" });
+      methods.forEach(function(m) {
+        list.appendChild(el("div", { className: "api-method-row" },
+          el("code", { className: "api-method-name" }, m.name),
+          el("div", { className: "api-method-desc" }, m.desc)
+        ));
+      });
+      d.appendChild(list);
       return d;
     } },
     { id: "javascript", label: "Javascript", content: function() {
@@ -2875,6 +2981,12 @@ fetch("/api/me").then(r => r.json()).then(d => {
   fetch("/api/projects").then(r => r.json()).then(pd => {
     if (pd && pd.projects) state.projects = pd.projects;
     checkInbox();
+    checkShareInvites();
+    if (window.RebootDevice) {
+      window.RebootDevice.init({ root: "html", onDetected: function(info) {
+        document.body.setAttribute("data-device", info.type);
+      } });
+    }
     const path = window.location.pathname || '';
     if (path === '/ourapi' || path === '/dashboard/ourapi') {
       state.page = 'ourapi';
