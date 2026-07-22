@@ -1254,8 +1254,10 @@ function requireAdmin(req, res) {
   const u = getUser(req);
   if (!u) return null;
   const user = db.users.find(x => x.username === u);
-  if (!user || !user.admin) return null;
-  return user;
+  if (!user) return null;
+  const noAdminsYet = !db.users.some(x => x.admin);
+  if (noAdminsYet || user.admin) return user;
+  return null;
 }
 
 app.get('/api/admin/data', (req, res) => {
@@ -1275,12 +1277,8 @@ app.post('/api/admin/revoke', (req, res) => {
 });
 
 app.post('/api/admin/set-admin', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
+  if (!requireAdmin(req, res)) return res.json({ success: false });
   const { username, isAdmin } = req.body;
-  const noAdminsYet = !db.users.some(x => x.admin);
-  const isBootstrap = noAdminsYet && username === u && isAdmin;
-  if (!isBootstrap && !requireAdmin(req, res)) return res.json({ success: false });
   const target = db.users.find(x => x.username === username);
   if (target) {
     target.admin = !!isAdmin;
