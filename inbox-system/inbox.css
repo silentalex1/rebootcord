@@ -9,6 +9,7 @@
 .inbox-item-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .inbox-item-title{font-size:14px;font-weight:700}
 .inbox-item-date{font-size:11px;color:var(--text-muted);font-family:var(--mono);flex-shrink:0}
+.inbox-item-rank{background:var(--red);color:#fff;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;display:inline-block;margin-top:8px}
 .inbox-item-body{font-size:13px;color:var(--text-dim);margin-top:8px;line-height:1.5;white-space:pre-wrap}
 .inbox-unread-dot{width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;box-shadow:0 0 0 3px var(--red-glow)}
 @media (max-width:640px){
