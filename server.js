@@ -709,6 +709,14 @@ app.get('/api/inbox', (req, res) => {
   res.json({ success: true, messages: msgs });
 });
 
+app.post('/api/inbox/delete', (req, res) => {
+  const user = requireAdmin(req, res);
+  if (!user) return res.json({ success: false });
+  db.inboxMessages = (db.inboxMessages || []).filter(x => String(x.id) !== String(req.body.id));
+  saveDB();
+  res.json({ success: true });
+});
+
 app.post('/api/inbox/read', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
@@ -1242,13 +1250,22 @@ app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
   }
 });
 
-app.get('/api/admin/data', (req, res) => {
+function requireAdmin(req, res) {
   const u = getUser(req);
-  if (!u) return res.json({ users: [], inviteCodes: {}, adminApiKeys: [] });
-  res.json({ users: db.users, inviteCodes: db.inviteCodes, adminApiKeys: db.adminApiKeys || [] });
+  if (!u) return null;
+  const user = db.users.find(x => x.username === u);
+  if (!user || !user.admin) return null;
+  return user;
+}
+
+app.get('/api/admin/data', (req, res) => {
+  if (!requireAdmin(req, res)) return res.json({ users: [], inviteCodes: {}, adminApiKeys: [] });
+  const users = db.users.map(u => ({ username: u.username, admin: !!u.admin, premium: !!u.premium }));
+  res.json({ users, inviteCodes: db.inviteCodes, adminApiKeys: db.adminApiKeys || [] });
 });
 
 app.post('/api/admin/revoke', (req, res) => {
+  if (!requireAdmin(req, res)) return res.json({ success: false });
   const { code } = req.body;
   if (db.inviteCodes[code] !== undefined) {
     delete db.inviteCodes[code];
@@ -1261,6 +1278,9 @@ app.post('/api/admin/set-admin', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
   const { username, isAdmin } = req.body;
+  const noAdminsYet = !db.users.some(x => x.admin);
+  const isBootstrap = noAdminsYet && username === u && isAdmin;
+  if (!isBootstrap && !requireAdmin(req, res)) return res.json({ success: false });
   const target = db.users.find(x => x.username === username);
   if (target) {
     target.admin = !!isAdmin;
@@ -1270,8 +1290,7 @@ app.post('/api/admin/set-admin', (req, res) => {
 });
 
 app.post('/api/admin/create-admin-key', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
+  if (!requireAdmin(req, res)) return res.json({ success: false });
   const { apiKey } = req.body;
   db.adminApiKeys = db.adminApiKeys || [];
   db.adminApiKeys.push({ key: apiKey, assignedUser: null, createdAt: Date.now() });
@@ -1280,8 +1299,7 @@ app.post('/api/admin/create-admin-key', (req, res) => {
 });
 
 app.post('/api/admin/assign-admin-key', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
+  if (!requireAdmin(req, res)) return res.json({ success: false });
   const { apiKey, username } = req.body;
   const keyObj = (db.adminApiKeys || []).find(k => k.key === apiKey);
   if (!keyObj) return res.json({ success: false });
