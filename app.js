@@ -23,9 +23,7 @@ const FONTS = [
 const API_BASE = (() => {
   const h = location.hostname;
   const p = location.port;
-  // Production / Render: use relative URLs (same origin)
   if (h.endsWith('.onrender.com') || h === 'rebootcord.world' || h.endsWith('.rebootcord.world')) return '';
-  // Local dev: when frontend served on different port (e.g. 5500), point to backend on 1000
   if (p === '1000' || p === '8080' || p === '5500' || (h === '127.0.0.1' && p !== '1000') || (h === 'localhost' && p !== '1000')) return 'http://127.0.0.1:1000';
   return '';
 })();
