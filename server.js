@@ -77,8 +77,8 @@ const SECRET = process.env.SESSION_SECRET || 'rebootcord-secret-key';
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 
 function loadDB() {
-  try { if (fs.existsSync(DB_FILE)) { const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8')); if(!d.changelogs) d.changelogs=[]; if(!d.apiKeys) d.apiKeys=[]; if(!d.feedbacks) d.feedbacks=[]; if(!d.feedbackChats) d.feedbackChats={}; return d; } } catch(e) {}
-  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: 25565, changelogs: [], apiKeys: [], feedbacks: [], feedbackChats: {} };
+  try { if (fs.existsSync(DB_FILE)) { const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8')); if(!d.changelogs) d.changelogs=[]; if(!d.apiKeys) d.apiKeys=[]; if(!d.feedbacks) d.feedbacks=[]; if(!d.feedbackChats) d.feedbackChats={}; if(!d.inboxMessages) d.inboxMessages=[]; return d; } } catch(e) {}
+  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: 25565, changelogs: [], apiKeys: [], feedbacks: [], feedbackChats: {}, inboxMessages: [] };
 }
 
 function saveDB() {
@@ -248,6 +248,35 @@ function setCookie(res, token) {
 
 function clearCookie(res) {
   res.setHeader('Set-Cookie', 'rc_tok=; HttpOnly; Path=/; Max-Age=0');
+}
+
+const unlockedAccess = {};
+
+function findOwnerAndProject(id) {
+  for (const owner of db.users) {
+    const p = (owner.projects || []).find(x => String(x.id) === String(id));
+    if (p) return { owner, p };
+  }
+  return { owner: null, p: null };
+}
+
+function getAccess(u, id) {
+  const { owner, p } = findOwnerAndProject(id);
+  if (!p) return { p: null };
+  const isOwner = !!owner && owner.username === u;
+  const share = (p.shared || []).find(x => x.username === u);
+  const perms = share ? share.perms : { editFiles: false, changeName: false, fullAccess: false };
+  const isShared = !!share;
+  const locked = !!p.password && !isOwner && !unlockedAccess[u + '::' + id];
+  return { owner, p, isOwner, isShared, perms, locked, hasAccess: isOwner || isShared };
+}
+
+function canControl(access) {
+  return access.isOwner || (access.hasAccess && access.perms.fullAccess);
+}
+
+function canEditFiles(access) {
+  return access.isOwner || (access.hasAccess && (access.perms.editFiles || access.perms.fullAccess));
 }
 
 function broadcastLog(username, projectId, msg, type) {
@@ -479,6 +508,173 @@ app.post('/api/projects', (req, res) => {
   res.json({ success: true });
 });
 
+app.get('/api/projects/:id/access', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  if (!access.p) return res.json({ success: false });
+  res.json({
+    success: true,
+    isOwner: access.isOwner,
+    isShared: access.isShared,
+    perms: access.perms,
+    locked: access.locked,
+    hasPassword: !!access.p.password,
+    private: !!access.p.private,
+    name: access.p.name,
+    shared: access.isOwner ? (access.p.shared || []).map(s => ({ username: s.username, perms: s.perms })) : []
+  });
+});
+
+app.post('/api/projects/:id/unlock', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  if (!access.p) return res.json({ success: false });
+  if (!access.hasAccess) return res.json({ success: false, message: 'You do not have access to this project.' });
+  if (access.p.password && access.p.password === req.body.password) {
+    unlockedAccess[u + '::' + req.params.id] = true;
+    return res.json({ success: true });
+  }
+  res.json({ success: false, message: 'Incorrect password.' });
+});
+
+app.post('/api/projects/:id/share', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  if (!user) return res.json({ success: false });
+  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false, message: 'Project not found.' });
+  const target = (req.body.username || '').trim();
+  if (!target) return res.json({ success: false, message: 'Enter a username.' });
+  if (target === u) return res.json({ success: false, message: 'You cannot share with yourself.' });
+  const targetUser = db.users.find(x => x.username.toLowerCase() === target.toLowerCase());
+  if (!targetUser) return res.json({ success: false, message: 'That user does not exist.' });
+  p.shared = p.shared || [];
+  if (p.shared.find(x => x.username === targetUser.username)) return res.json({ success: false, message: 'Already shared with that user.' });
+  p.shared.push({ username: targetUser.username, perms: { editFiles: false, changeName: false, fullAccess: false } });
+  saveDB();
+  res.json({ success: true, shared: p.shared });
+});
+
+app.post('/api/projects/:id/unshare', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  if (!user) return res.json({ success: false });
+  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+  p.shared = (p.shared || []).filter(x => x.username !== req.body.username);
+  delete unlockedAccess[req.body.username + '::' + req.params.id];
+  saveDB();
+  res.json({ success: true, shared: p.shared });
+});
+
+app.post('/api/projects/:id/share-perms', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  if (!user) return res.json({ success: false });
+  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+  const entry = (p.shared || []).find(x => x.username === req.body.username);
+  if (!entry) return res.json({ success: false });
+  entry.perms = {
+    editFiles: !!req.body.editFiles,
+    changeName: !!req.body.changeName,
+    fullAccess: !!req.body.fullAccess
+  };
+  saveDB();
+  res.json({ success: true, shared: p.shared });
+});
+
+app.post('/api/projects/:id/settings', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  if (!user) return res.json({ success: false });
+  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+  if (typeof req.body.password === 'string') p.password = req.body.password.trim();
+  if (typeof req.body.private === 'boolean') p.private = req.body.private;
+  if (typeof req.body.name === 'string' && req.body.name.trim()) p.name = req.body.name.trim();
+  saveDB();
+  res.json({ success: true, name: p.name, private: !!p.private, hasPassword: !!p.password });
+});
+
+app.post('/api/projects/:id/rename-shared', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  if (!access.p || access.isOwner) return res.json({ success: false });
+  if (access.locked) return res.json({ success: false, needsPassword: true });
+  if (!access.perms.changeName && !access.perms.fullAccess) return res.json({ success: false, message: 'No permission to rename.' });
+  const name = (req.body.name || '').trim();
+  if (!name) return res.json({ success: false });
+  access.p.name = name;
+  saveDB();
+  res.json({ success: true, name });
+});
+
+app.get('/api/shared-projects', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false, projects: [] });
+  const out = [];
+  for (const owner of db.users) {
+    for (const p of (owner.projects || [])) {
+      const share = (p.shared || []).find(x => x.username === u);
+      if (share) {
+        out.push({
+          id: p.id, name: p.name, type: p.type, lang: p.lang, running: p.running,
+          owner: owner.username, perms: share.perms,
+          locked: !!p.password && !unlockedAccess[u + '::' + p.id]
+        });
+      }
+    }
+  }
+  res.json({ success: true, projects: out });
+});
+
+app.get('/api/inbox', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false, messages: [] });
+  const msgs = (db.inboxMessages || []).map(m => ({
+    id: m.id, title: m.title, body: m.body, ts: m.ts,
+    read: (m.readBy || []).includes(u)
+  }));
+  res.json({ success: true, messages: msgs });
+});
+
+app.post('/api/inbox/read', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const m = (db.inboxMessages || []).find(x => String(x.id) === String(req.body.id));
+  if (m) {
+    m.readBy = m.readBy || [];
+    if (!m.readBy.includes(u)) m.readBy.push(u);
+    saveDB();
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/inbox/send', (req, res) => {
+  const u = getUser(req);
+  const user = db.users.find(x => x.username === u);
+  if (!user || !user.admin) return res.json({ success: false, message: 'Admin only.' });
+  const title = (req.body.title || '').trim();
+  const body = (req.body.body || '').trim();
+  if (!title || !body) return res.json({ success: false });
+  db.inboxMessages = db.inboxMessages || [];
+  db.inboxMessages.unshift({ id: Date.now(), title, body, ts: Date.now(), readBy: [] });
+  saveDB();
+  res.json({ success: true });
+});
+
+app.get('/inbox', (req, res) => {
+  res.sendFile(path.join(__dirname, 'inbox-system', 'inbox.html'));
+});
+
 app.post('/api/createcode', (req, res) => {
   const { code, user } = req.body;
   if (!code || !code.startsWith('rebootcord-')) return res.json({ success: false, message: 'Invalid code format' });
@@ -527,9 +723,10 @@ app.get('/api/projects/:id/detect-deps', (req, res) => {
 app.get('/api/projects/:id/dir', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false, files: [] });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false, files: [] });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !access.hasAccess) return res.json({ success: false, files: [] });
+  if (access.locked) return res.json({ success: false, files: [], needsPassword: true });
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   let files = [];
   try {
@@ -543,9 +740,10 @@ app.get('/api/projects/:id/dir', (req, res) => {
 app.get('/api/projects/:id/file', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !access.hasAccess) return res.json({ success: false });
+  if (access.locked) return res.json({ success: false, needsPassword: true });
   const fname = req.query.name;
   const target = path.join(PROJECTS_DIR, String(p.id), fname);
   try {
@@ -555,6 +753,30 @@ app.get('/api/projects/:id/file', (req, res) => {
     }
   } catch(e) {}
   res.json({ success: false });
+});
+
+app.post('/api/projects/:id/savefile', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canEditFiles(access)) return res.json({ success: false });
+  if (access.locked) return res.json({ success: false, needsPassword: true });
+  const fname = req.body.name;
+  const content = req.body.content || '';
+  if (!fname) return res.json({ success: false });
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  const target = path.join(pDir, fname);
+  try {
+    if (!fs.existsSync(path.dirname(target))) fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content);
+    p.files = p.files || {};
+    p.files[fname] = content;
+    saveDB();
+    res.json({ success: true });
+  } catch(e) {
+    res.json({ success: false });
+  }
 });
 
 app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
@@ -661,7 +883,7 @@ app.post('/api/projects/:id/revert', (req, res) => {
   const target = path.join(pDir, bname);
   try {
     if (procs[p.id]) {
-      procs[p.id].kill();
+      killProcessTree(procs[p.id], 'SIGKILL');
       delete procs[p.id];
       p.running = false;
     }
@@ -680,16 +902,17 @@ app.post('/api/projects/:id/revert', (req, res) => {
 app.post('/api/projects/:id/start', async (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canControl(access)) return res.json({ success: false });
+  if (access.locked) return res.json({ success: false, needsPassword: true });
 
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
 
   if (procs[p.id]) {
-    try { procs[p.id].kill(); } catch(e) {}
+    killProcessTree(procs[p.id], 'SIGKILL');
+    delete procs[p.id];
   }
 
   p.running = true;
@@ -750,7 +973,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
     if (!fs.existsSync(jarPath)) {
       broadcastLog(u, p.id, '[System] No server.jar found. Use Files tab to upload the correct server jar for this type/version, then Start again.', 'warn');
     }
-    const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true });
+    const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true, detached: true });
     procs[p.id] = proc;
 
     proc.on('error', (err) => {
@@ -803,7 +1026,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
       }
     } catch(e) {}
 
-    const proc = cp.spawn(cmd, ['-u', mainFile], { cwd: pDir, env: envVars, shell: true });
+    const proc = cp.spawn(cmd, ['-u', mainFile], { cwd: pDir, env: envVars, shell: true, detached: true });
     procs[p.id] = proc;
     let missingPkgs = new Set();
     proc.on('error', (err) => { broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err'); p.running=false; saveDB(); });
@@ -835,27 +1058,30 @@ app.post('/api/projects/:id/start', async (req, res) => {
   res.json({ success: true });
 });
 
+function killProcessTree(proc, signal) {
+  try {
+    process.kill(-proc.pid, signal);
+  } catch(e) {
+    try { proc.kill(signal); } catch(e2) {}
+  }
+}
+
 app.post('/api/projects/:id/stop', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canControl(access)) return res.json({ success: false });
 
   if (procs[p.id]) {
-    try {
-      const proc = procs[p.id];
-      proc.kill('SIGTERM');
-      setTimeout(() => {
-        try {
-          if (procs[p.id]) {
-            procs[p.id].kill('SIGKILL');
-            delete procs[p.id];
-          }
-        } catch(e) {}
-      }, 2000);
-    } catch(e) {}
+    const proc = procs[p.id];
+    killProcessTree(proc, 'SIGTERM');
+    setTimeout(() => {
+      if (procs[p.id] === proc) {
+        killProcessTree(proc, 'SIGKILL');
+        delete procs[p.id];
+      }
+    }, 2000);
   }
   p.running = false;
   saveDB();
@@ -866,23 +1092,14 @@ app.post('/api/projects/:id/stop', (req, res) => {
 app.post('/api/projects/:id/kill', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canControl(access)) return res.json({ success: false });
 
   if (procs[p.id]) {
-    try {
-      const proc = procs[p.id];
-      proc.kill('SIGKILL');
-      setTimeout(() => {
-        try {
-          if (procs[p.id]) {
-            delete procs[p.id];
-          }
-        } catch(e) {}
-      }, 500);
-    } catch(e) {}
+    const proc = procs[p.id];
+    killProcessTree(proc, 'SIGKILL');
+    delete procs[p.id];
   }
 
   p.running = false;
