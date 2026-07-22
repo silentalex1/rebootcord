@@ -15,8 +15,12 @@ const bcrypt = require('bcrypt');
 
 const execAsync = util.promisify(cp.exec);
 
-process.on('uncaughtException', () => {});
-process.on('unhandledRejection', () => {});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
 
 const app = express();
 const server = http.createServer(app);
@@ -1680,7 +1684,6 @@ app.post('/v1/chat/completions', async (req, res) => {
 
     const hasImages = Array.isArray(messages) && messages.some(m => Array.isArray(m.content) && m.content.some(p => p && p.type === 'image_url'));
     const modelLower = (requestedModel || '').toLowerCase();
-    // Prefer Gemini (cloud AI) on Render/production if GEMINI_API_KEY present. Only force local Ollama/PrysmisAI for explicit provider or no key.
     const forceOllama = AI_PROVIDER === 'ollama' || (!GEMINI_API_KEY && (modelLower.includes('llava') || modelLower.includes('vision') || modelLower.includes('ollama') || modelLower === 'rebootcord-vision' || modelLower === 'prysmis-ai'));
     const useOllama = forceOllama || AI_PROVIDER === 'ollama' || (!GEMINI_API_KEY && AI_PROVIDER !== 'gemini') || (hasImages && !GEMINI_API_KEY);
 
@@ -1741,7 +1744,6 @@ app.post('/v1/messages', async (req, res) => {
 
     const hasImages = Array.isArray(messages) && messages.some(m => Array.isArray(m.content) && m.content.some(p => p && p.type === 'image_url'));
     const modelLower = (requestedModel || '').toLowerCase();
-    // Prefer Gemini (cloud AI) on Render/production if GEMINI_API_KEY present. Only force local Ollama/PrysmisAI for explicit provider or no key.
     const forceOllama = AI_PROVIDER === 'ollama' || (!GEMINI_API_KEY && (modelLower.includes('llava') || modelLower.includes('vision') || modelLower.includes('ollama') || modelLower === 'rebootcord-vision' || modelLower === 'prysmis-ai'));
     const useOllama = forceOllama || AI_PROVIDER === 'ollama' || (!GEMINI_API_KEY && AI_PROVIDER !== 'gemini') || (hasImages && !GEMINI_API_KEY);
 
