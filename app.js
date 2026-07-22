@@ -146,7 +146,7 @@ function connectWS() {
       }
       if (data.event === 'installAllDone' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
         state.installingAll = false;
-        state.lastInstallResult = { success: data.success, count: data.count, at: getTime() };
+        state.lastInstallResult = { success: data.success, count: data.count, upToDate: !!data.skipped, at: getTime() };
         scheduleRender();
       }
       if (data.event === 'installDone' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
@@ -1499,7 +1499,7 @@ function installPkg() {
   scheduleRender();
 }
 
-function installAllPkgs() {
+function installAllPkgs(force) {
   if (!ws || !state.currentProject || state.installingAll) return;
   const p = state.currentProject;
   state.installingAll = true;
@@ -1507,15 +1507,27 @@ function installAllPkgs() {
   scheduleRender();
   const localCode = Object.values((p.files && typeof p.files === "object") ? p.files : {}).join("\n");
   const localPkgs = detectDependencies(localCode, p.lang || "Python");
-  fetch("/api/projects/" + p.id + "/detect-deps").then(r => r.json()).then(d => {
-    const serverPkgs = (d && d.success) ? (d.packages || []) : [];
-    const merged = Array.from(new Set([...serverPkgs, ...localPkgs, ...(state.missingPackages || [])]));
-    ws.send(JSON.stringify({ event: 'installAll', projectId: p.id, pkgs: merged }));
+  const sendInstall = (merged) => {
+    ws.send(JSON.stringify({ event: 'installAll', projectId: p.id, pkgs: merged, force: !!force }));
     state.missingPackages = [];
-  }).catch(() => {
-    ws.send(JSON.stringify({ event: 'installAll', projectId: p.id, pkgs: Array.from(new Set([...localPkgs, ...(state.missingPackages || [])])) }));
-    state.missingPackages = [];
-  });
+  };
+  if (!force) {
+    fetch("/api/projects/" + p.id + "/deps-status").then(r => r.json()).then(d => {
+      if (d && d.success && d.upToDate && !(state.missingPackages || []).length) {
+        state.installingAll = false;
+        state.lastInstallResult = { success: true, count: (d.packages || []).length, upToDate: true };
+        scheduleRender();
+        return;
+      }
+      const merged = Array.from(new Set([...(d && d.packages ? d.packages : []), ...localPkgs, ...(state.missingPackages || [])]));
+      sendInstall(merged);
+    }).catch(() => sendInstall(Array.from(new Set([...localPkgs, ...(state.missingPackages || [])]))));
+  } else {
+    fetch("/api/projects/" + p.id + "/detect-deps").then(r => r.json()).then(d => {
+      const serverPkgs = (d && d.success) ? (d.packages || []) : [];
+      sendInstall(Array.from(new Set([...serverPkgs, ...localPkgs, ...(state.missingPackages || [])])));
+    }).catch(() => sendInstall(Array.from(new Set([...localPkgs, ...(state.missingPackages || [])]))));
+  }
 }
 
 function fetchChangelogs() {
@@ -1640,12 +1652,17 @@ function renderBotDashboard() {
   const hasMissing = state.missingPackages && state.missingPackages.length > 0;
   const label = state.installingAll ? "Installing..." : (hasMissing ? "Install All Detected" : "Install All Dependencies");
   const installAllSection = el("div", { style: { marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" } },
-    el("button", { className: "btn-install discord-btn btn-install-all" + (state.installingAll ? " installing" : ""), disabled: state.installingAll, style: { background: "var(--green)", color: "#000" }, onClick: installAllPkgs },
+    el("button", { className: "btn-install discord-btn btn-install-all" + (state.installingAll ? " installing" : ""), disabled: state.installingAll, style: { background: "var(--green)", color: "#000" }, onClick: () => installAllPkgs(false) },
       state.installingAll ? el("span", { className: "install-spinner" }) : svgIcon("download"), " " + label
     ),
     state.lastInstallResult ? el("div", { className: "install-result " + (state.lastInstallResult.success ? "ok" : "err") },
-      state.lastInstallResult.success ? ("Installed " + (state.lastInstallResult.count || 0) + " package" + (state.lastInstallResult.count === 1 ? "" : "s")) : "Install failed, check console"
-    ) : null
+      state.lastInstallResult.success
+        ? (state.lastInstallResult.upToDate
+            ? "Dependencies already up to date (" + (state.lastInstallResult.count || 0) + ")"
+            : ("Installed " + (state.lastInstallResult.count || 0) + " package" + (state.lastInstallResult.count === 1 ? "" : "s")))
+        : "Install failed, check console"
+    ) : null,
+    state.lastInstallResult && state.lastInstallResult.upToDate ? el("button", { className: "btn-clear", style: { alignSelf: "flex-start" }, onClick: () => installAllPkgs(true) }, "Force reinstall") : null
   );
 
   const tInput = el("input", { className: "settings-input discord-input", type: "password", id: "tokenInput", placeholder: "Paste your bot token", value: p.botToken || "", 'aria-label': 'Bot token' });
