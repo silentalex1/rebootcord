@@ -25,8 +25,13 @@ process.on('unhandledRejection', (reason) => {
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
+const DATA_DIR = process.env.RC_DATA_DIR || path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const TMP_UPLOAD_DIR = path.join(DATA_DIR, 'tmp-uploads');
+if (!fs.existsSync(TMP_UPLOAD_DIR)) fs.mkdirSync(TMP_UPLOAD_DIR, { recursive: true });
+
 const upload = multer({ 
-  dest: 'uploads/',
+  dest: TMP_UPLOAD_DIR,
   limits: { fileSize: 200 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['.js', '.py', '.json', '.txt', '.md', '.jar', '.zip', '.tar', '.gz', '.html', '.css', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.env', '.sh', '.bat', '.ps1', '.ts', '.tsx', '.jsx', '.vue', '.svelte', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.hpp', '.php', '.rb', '.swift', '.kt', '.xml', '.sql', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.eot'];
@@ -74,20 +79,54 @@ const apiLimiter = expressRateLimit({
 });
 app.use('/api/createcode', apiLimiter);
 
-const DB_FILE = path.join(__dirname, 'db.json');
-const PROJECTS_DIR = path.join(__dirname, 'projects_data');
+const DB_FILE = path.join(DATA_DIR, 'db.json');
+const PROJECTS_DIR = path.join(DATA_DIR, 'projects_data');
 const SECRET = process.env.SESSION_SECRET || 'rebootcord-secret-key';
 
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 
-function loadDB() {
-  try { if (fs.existsSync(DB_FILE)) { const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8')); if(!d.changelogs) d.changelogs=[]; if(!d.apiKeys) d.apiKeys=[]; if(!d.feedbacks) d.feedbacks=[]; if(!d.feedbackChats) d.feedbackChats={}; if(!d.inboxMessages) d.inboxMessages=[]; return d; } } catch(e) {}
-  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: 25565, changelogs: [], apiKeys: [], feedbacks: [], feedbackChats: {}, inboxMessages: [] };
+const RC_B64_MARKER = '\u0000RCB64\u0000';
+function bufferToStoredString(buf) {
+  const sample = buf.slice(0, 8000);
+  let suspicious = 0;
+  for (let i = 0; i < sample.length; i++) {
+    const c = sample[i];
+    if (c === 0) suspicious += 1000;
+    else if (c < 7 || (c > 13 && c < 32)) suspicious++;
+  }
+  const isBinary = sample.length > 0 && (suspicious / sample.length) > 0.02;
+  return isBinary ? (RC_B64_MARKER + buf.toString('base64')) : buf.toString('utf8');
+}
+function storedStringToBuffer(str) {
+  if (typeof str === 'string' && str.startsWith(RC_B64_MARKER)) return Buffer.from(str.slice(RC_B64_MARKER.length), 'base64');
+  return Buffer.from(str == null ? '' : String(str), 'utf8');
 }
 
-function saveDB() {
-  try { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); } catch(e) {}
+function loadDB() {
+  try { if (fs.existsSync(DB_FILE)) { const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8')); if(!d.changelogs) d.changelogs=[]; if(!d.apiKeys) d.apiKeys=[]; if(!d.feedbacks) d.feedbacks=[]; if(!d.feedbackChats) d.feedbackChats={}; if(!d.inboxMessages) d.inboxMessages=[]; if(!d.shareInvites) d.shareInvites=[]; return d; } } catch(e) {}
+  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: 25565, changelogs: [], apiKeys: [], feedbacks: [], feedbackChats: {}, inboxMessages: [], shareInvites: [] };
 }
+
+let saveDBPending = false;
+let saveDBTimer = null;
+function saveDBNow() {
+  try {
+    const tmp = DB_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+    fs.renameSync(tmp, DB_FILE);
+    saveDBPending = false;
+  } catch(e) { console.error('[saveDB]', e); }
+}
+function saveDB() {
+  saveDBPending = true;
+  if (saveDBTimer) return;
+  saveDBTimer = setTimeout(() => { saveDBTimer = null; saveDBNow(); }, 150);
+}
+setInterval(() => { if (saveDBPending) saveDBNow(); }, 10000);
+['SIGINT', 'SIGTERM'].forEach((sig) => {
+  process.on(sig, () => { saveDBNow(); process.exit(0); });
+});
+process.on('exit', () => { if (saveDBPending) saveDBNow(); });
 
 let db = loadDB();
 const procs = {};
@@ -548,7 +587,7 @@ app.post('/api/projects', (req, res) => {
         if (!fs.existsSync(path.dirname(filePath))) {
           fs.mkdirSync(path.dirname(filePath), { recursive: true });
         }
-        fs.writeFileSync(filePath, p.files[fname]);
+        fs.writeFileSync(filePath, storedStringToBuffer(p.files[fname]));
       }
     }
   });
@@ -602,8 +641,33 @@ app.post('/api/projects/:id/share', (req, res) => {
   p.shared = p.shared || [];
   if (p.shared.find(x => x.username === targetUser.username)) return res.json({ success: false, message: 'Already shared with that user.' });
   p.shared.push({ username: targetUser.username, perms: { editFiles: false, changeName: false, fullAccess: false } });
+  db.shareInvites = db.shareInvites || [];
+  db.shareInvites.push({
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+    recipient: targetUser.username,
+    sender: u,
+    projectId: p.id,
+    projectName: p.name,
+    ts: Date.now(),
+    seen: false
+  });
   saveDB();
   res.json({ success: true, shared: p.shared });
+});
+
+app.get('/api/share-invites', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false, invites: [] });
+  const invites = (db.shareInvites || []).filter(x => x.recipient === u && !x.seen);
+  res.json({ success: true, invites });
+});
+
+app.post('/api/share-invites/ack', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const inv = (db.shareInvites || []).find(x => x.id === req.body.id && x.recipient === u);
+  if (inv) { inv.seen = true; saveDB(); }
+  res.json({ success: true });
 });
 
 app.post('/api/projects/:id/unshare', (req, res) => {
@@ -785,6 +849,11 @@ app.get('/api/stats', (req, res) => {
   res.json({ activeUsers: db.users.length, totalInvites: Object.keys(db.inviteCodes).length });
 });
 
+app.get('/api/users', (req, res) => {
+  const usernames = db.users.map(x => x.username).sort((a, b) => a.localeCompare(b));
+  res.json({ success: true, count: usernames.length, users: usernames });
+});
+
 app.post('/api/blacklist', (req, res) => {
   const { key } = req.body;
   if (key && !db.blacklisted.includes(key)) { db.blacklisted.push(key); saveDB(); }
@@ -880,21 +949,37 @@ app.post('/api/projects/:id/savefile', (req, res) => {
 
 app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
   const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (p && req.file) {
-    const pDir = path.join(PROJECTS_DIR, String(p.id));
-    if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-    const relPath = (req.body && req.body.relPath) ? String(req.body.relPath).replace(/\\/g, '/') : req.file.originalname;
-    const target = safeJoin(pDir, relPath);
-    if (!target) { try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
-    const targetDir = path.dirname(target);
-    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+  if (!u) { if (req.file) try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canEditFiles(access)) { if (req.file) try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
+  if (access.locked) { if (req.file) try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false, needsPassword: true }); }
+  if (!req.file) return res.json({ success: false });
+
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+
+  let relPath = (req.body && req.body.relPath) ? String(req.body.relPath).replace(/\\/g, '/') : req.file.originalname;
+  relPath = relPath.split('/').map(s => s.trim()).filter(s => s && s !== '.' && s !== '..').join('/');
+  if (!relPath) { try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
+
+  const target = safeJoin(pDir, relPath);
+  if (!target) { try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
+  const targetDir = path.dirname(target);
+  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+  try {
     fs.renameSync(req.file.path, target);
+    const buf = fs.readFileSync(target);
+    p.files = p.files || {};
+    p.files[relPath] = bufferToStoredString(buf);
+    saveDB();
     broadcastLog(u, p.id, '[System] Uploaded ' + relPath, 'info');
+    res.json({ success: true, path: relPath });
+  } catch (e) {
+    try { if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch(e2) {}
+    res.json({ success: false });
   }
-  res.json({ success: true });
 });
 
 app.post('/api/projects/:id/deleteFile', (req, res) => {
@@ -1107,7 +1192,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
         if (!fs.existsSync(path.dirname(filePath))) {
           fs.mkdirSync(path.dirname(filePath), { recursive: true });
         }
-        fs.writeFileSync(filePath, p.files[fname]);
+        fs.writeFileSync(filePath, storedStringToBuffer(p.files[fname]));
       }
     }
     const mainFile = Object.keys(p.files || {})[0] || (p.lang === 'Python' ? 'main.py' : 'index.js');
@@ -1218,40 +1303,6 @@ app.post('/api/projects/:id/kill', (req, res) => {
   saveDB();
   broadcastLog(u, p.id, '[System] Process forcefully killed.', 'warn');
   res.json({ success: true });
-});
-
-app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
-  if (!req.file) return res.json({ success: false });
-
-  const pDir = path.join(PROJECTS_DIR, String(p.id));
-  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-
-  const relPath = req.body.relPath || req.file.originalname;
-  const targetPath = path.join(pDir, relPath);
-  const targetDir = path.dirname(targetPath);
-
-  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-
-  try {
-    if (fs.existsSync(targetPath)) {
-      fs.unlinkSync(targetPath);
-    }
-    fs.renameSync(req.file.path, targetPath);
-    res.json({ success: true });
-  } catch (e) {
-    try {
-      if (fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
-    } catch (cleanupError) {}
-    res.json({ success: false });
-  }
 });
 
 function requireAdmin(req, res) {
@@ -1380,6 +1431,55 @@ app.get('/api/v1/apikeys', (req, res) => {
     masked: 'rc_******'
   }));
   res.json({ success: true, keys });
+});
+
+function detectDeviceFromUA(uaRaw, hints) {
+  const ua = (uaRaw || '').toLowerCase();
+  hints = hints || {};
+  let type = 'desktop';
+  let os = 'unknown';
+  let browser = 'unknown';
+
+  if (/ipad/.test(ua) || (/macintosh/.test(ua) && hints.touch)) type = 'tablet';
+  else if (/tablet|kindle|silk|playbook/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) type = 'tablet';
+  else if (/mobi|iphone|ipod|android.*mobile|windows phone|blackberry|opera mini|iemobile/.test(ua)) type = 'mobile';
+  else if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s/.test(ua)) type = 'tv';
+  else if (/xbox|playstation|nintendo/.test(ua)) type = 'console';
+  else if (/bot|crawl|spider|slurp|bingpreview/.test(ua)) type = 'bot';
+  else type = 'desktop';
+
+  if (typeof hints.maxTouchPoints === 'number' && hints.maxTouchPoints > 0 && typeof hints.screenWidth === 'number') {
+    if (hints.screenWidth < 640 && type === 'desktop') type = 'mobile';
+    else if (hints.screenWidth < 1100 && type === 'desktop') type = 'tablet';
+  }
+
+  if (/windows nt/.test(ua)) os = 'windows';
+  else if (/mac os x|macintosh/.test(ua)) os = 'macos';
+  else if (/android/.test(ua)) os = 'android';
+  else if (/iphone|ipad|ipod/.test(ua)) os = 'ios';
+  else if (/cros/.test(ua)) os = 'chromeos';
+  else if (/linux/.test(ua)) os = 'linux';
+
+  if (/edg\//.test(ua)) browser = 'edge';
+  else if (/opr\/|opera/.test(ua)) browser = 'opera';
+  else if (/chrome\//.test(ua)) browser = 'chrome';
+  else if (/crios/.test(ua)) browser = 'chrome';
+  else if (/fxios|firefox/.test(ua)) browser = 'firefox';
+  else if (/safari/.test(ua)) browser = 'safari';
+
+  return { type, os, browser };
+}
+
+app.get('/api/v1/device', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.status(401).json({ success: false, message: 'Unauthorized' });
+  const hints = {
+    touch: req.query.touch === '1',
+    maxTouchPoints: req.query.mtp ? parseInt(req.query.mtp, 10) : 0,
+    screenWidth: req.query.w ? parseInt(req.query.w, 10) : 0
+  };
+  const info = detectDeviceFromUA(req.headers['user-agent'] || '', hints);
+  res.json({ success: true, type: info.type, os: info.os, browser: info.browser });
 });
 
 app.post('/api/v1/deploy', (req, res) => {
