@@ -84,7 +84,26 @@ const state = {
   isAdmin: false,
   currentFeedbackUser: null,
   showFeedbackManagement: false,
-  feedbackChatUsers: []
+  feedbackChatUsers: [],
+  showShareModal: false,
+  shareUsername: "",
+  shareEditFiles: false,
+  shareChangeName: false,
+  shareFullAccess: false,
+  sharePrivate: false,
+  sharePassword: "",
+  shareError: "",
+  showSettingsModal: false,
+  settingsName: "",
+  settingsPassword: "",
+  settingsPrivate: false,
+  settingsSelectedMember: "",
+  settingsMemberEditFiles: false,
+  settingsMemberChangeName: false,
+  settingsMemberFullAccess: false,
+  projectAccess: null,
+  needsProjectPassword: false,
+  projectUnlockInput: ""
 };
 
 let ws;
@@ -710,6 +729,234 @@ function highlightCode(text, type) {
   return html;
 }
 
+function fetchProjectAccess(id) {
+  fetch('/api/projects/' + id + '/access').then(r => r.json()).then(d => {
+    if (d.success) {
+      state.projectAccess = d;
+      state.settingsName = d.name || "";
+      state.settingsPrivate = !!d.private;
+      state.needsProjectPassword = !!d.locked;
+      scheduleRender();
+    }
+  });
+}
+
+function submitShare() {
+  const p = state.currentProject;
+  if (!p) return;
+  const username = state.shareUsername.trim();
+  if (!username) { state.shareError = "Enter a username."; scheduleRender(); return; }
+  fetch('/api/projects/' + p.id + '/share', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username })
+  }).then(r => r.json()).then(d => {
+    if (!d.success) { state.shareError = d.message || "Failed to share."; scheduleRender(); return; }
+    fetch('/api/projects/' + p.id + '/share-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, editFiles: state.shareEditFiles, changeName: state.shareChangeName, fullAccess: state.shareFullAccess })
+    }).then(() => {
+      if (state.sharePrivate) {
+        fetch('/api/projects/' + p.id + '/settings', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ private: true, password: state.sharePassword })
+        }).then(() => {
+          finishShare(p);
+        });
+      } else {
+        finishShare(p);
+      }
+    });
+  });
+}
+
+function finishShare(p) {
+  state.showShareModal = false;
+  state.shareUsername = ""; state.shareEditFiles = false; state.shareChangeName = false;
+  state.shareFullAccess = false; state.sharePrivate = false; state.sharePassword = ""; state.shareError = "";
+  fetchProjectAccess(p.id);
+  scheduleRender();
+}
+
+function selectSharedMember(username) {
+  state.settingsSelectedMember = username;
+  const access = state.projectAccess;
+  const entry = access && access.shared ? access.shared.find(x => x.username === username) : null;
+  state.settingsMemberEditFiles = entry ? !!entry.perms.editFiles : false;
+  state.settingsMemberChangeName = entry ? !!entry.perms.changeName : false;
+  state.settingsMemberFullAccess = entry ? !!entry.perms.fullAccess : false;
+  scheduleRender();
+}
+
+function removeSharedMember() {
+  const p = state.currentProject;
+  if (!p || !state.settingsSelectedMember) return;
+  fetch('/api/projects/' + p.id + '/unshare', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: state.settingsSelectedMember })
+  }).then(() => {
+    state.settingsSelectedMember = "";
+    fetchProjectAccess(p.id);
+  });
+}
+
+function saveSettings() {
+  const p = state.currentProject;
+  if (!p) return;
+  const access = state.projectAccess;
+  if (access && access.isOwner) {
+    fetch('/api/projects/' + p.id + '/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: state.settingsName, password: state.settingsPassword, private: state.settingsPrivate })
+    }).then(() => {
+      p.name = state.settingsName;
+      if (state.settingsSelectedMember) {
+        fetch('/api/projects/' + p.id + '/share-perms', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: state.settingsSelectedMember, editFiles: state.settingsMemberEditFiles, changeName: state.settingsMemberChangeName, fullAccess: state.settingsMemberFullAccess })
+        }).then(() => {
+          state.showSettingsModal = false;
+          fetchProjectAccess(p.id);
+        });
+      } else {
+        state.showSettingsModal = false;
+        fetchProjectAccess(p.id);
+      }
+    });
+  } else {
+    fetch('/api/projects/' + p.id + '/rename-shared', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: state.settingsName })
+    }).then(r => r.json()).then(d => {
+      if (d.success) p.name = d.name;
+      state.showSettingsModal = false;
+      scheduleRender();
+    });
+  }
+}
+
+function unlockProject() {
+  const p = state.currentProject;
+  if (!p) return;
+  fetch('/api/projects/' + p.id + '/unlock', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: state.projectUnlockInput })
+  }).then(r => r.json()).then(d => {
+    if (d.success) {
+      state.needsProjectPassword = false;
+      state.projectUnlockInput = "";
+      openProject(p.id);
+    } else {
+      alert(d.message || "Incorrect password.");
+    }
+  });
+}
+
+function renderShareModal() {
+  const overlay = el("div", { className: "modal-overlay share-modal-overlay", onClick: (ev) => { if (ev.target === overlay) { state.showShareModal = false; scheduleRender(); } } });
+  const passwordField = state.sharePrivate ? el("div", { className: "share-password-fade" },
+    el("label", { className: "modal-label" }, "Enter project password"),
+    el("input", { className: "modal-input", type: "text", value: state.sharePassword, oninput: (e) => { state.sharePassword = e.target.value; } })
+  ) : null;
+  const modal = el("div", { className: "modal share-modal" },
+    el("h2", {}, "Share Project"),
+    el("label", { className: "modal-label" }, "Enter the user you want to share:"),
+    el("input", { className: "modal-input", type: "text", placeholder: "username", value: state.shareUsername, oninput: (e) => { state.shareUsername = e.target.value; } }),
+    state.shareError ? el("div", { className: "share-error" }, state.shareError) : null,
+    el("div", { className: "share-checkboxes" },
+      el("label", { className: "share-checkbox" },
+        el("input", { type: "checkbox", checked: state.shareEditFiles, onChange: (e) => { state.shareEditFiles = e.target.checked; scheduleRender(); } }),
+        " Allow the user to edit files"
+      ),
+      el("label", { className: "share-checkbox" },
+        el("input", { type: "checkbox", checked: state.shareChangeName, onChange: (e) => { state.shareChangeName = e.target.checked; scheduleRender(); } }),
+        " Allow the user to change project name"
+      ),
+      el("label", { className: "share-checkbox" },
+        el("input", { type: "checkbox", checked: state.shareFullAccess, onChange: (e) => { state.shareFullAccess = e.target.checked; scheduleRender(); } }),
+        " Allow full access to the user"
+      ),
+      el("label", { className: "share-checkbox" },
+        el("input", { type: "checkbox", checked: state.sharePrivate, onChange: (e) => { state.sharePrivate = e.target.checked; scheduleRender(); } }),
+        " Make project private"
+      )
+    ),
+    passwordField,
+    el("div", { className: "modal-actions" },
+      el("button", { className: "btn-cancel", onClick: () => { state.showShareModal = false; scheduleRender(); } }, "Cancel"),
+      el("button", { className: "btn-new", onClick: submitShare }, "Share now")
+    )
+  );
+  overlay.appendChild(modal);
+  return overlay;
+}
+
+function renderSettingsModal() {
+  const access = state.projectAccess;
+  const isOwner = access && access.isOwner;
+  const overlay = el("div", { className: "modal-overlay settings-modal-overlay", onClick: (ev) => { if (ev.target === overlay) { state.showSettingsModal = false; scheduleRender(); } } });
+  const modal = el("div", { className: "modal settings-modal" },
+    el("h2", {}, "Project Settings")
+  );
+  modal.appendChild(el("label", { className: "modal-label" }, "Project name"));
+  modal.appendChild(el("input", {
+    className: "modal-input", type: "text", value: state.settingsName,
+    disabled: !(isOwner || (access && (access.perms.changeName || access.perms.fullAccess))),
+    oninput: (e) => { state.settingsName = e.target.value; }
+  }));
+  if (isOwner) {
+    modal.appendChild(el("label", { className: "modal-label" }, "Current project password"));
+    modal.appendChild(el("input", { className: "modal-input", type: "text", placeholder: access.hasPassword ? "••••••••" : "No password set", value: state.settingsPassword, oninput: (e) => { state.settingsPassword = e.target.value; } }));
+    modal.appendChild(el("label", { className: "share-checkbox", style: { marginTop: "10px" } },
+      el("input", { type: "checkbox", checked: state.settingsPrivate, onChange: (e) => { state.settingsPrivate = e.target.checked; scheduleRender(); } }),
+      " Make project private"
+    ));
+    modal.appendChild(el("label", { className: "modal-label", style: { marginTop: "16px" } }, "Current shared members"));
+    const select = el("select", { className: "modal-input", value: state.settingsSelectedMember, onChange: (e) => { selectSharedMember(e.target.value); } },
+      el("option", { value: "" }, "Select a member..."),
+      ...(access.shared || []).map(s => el("option", { value: s.username }, s.username))
+    );
+    modal.appendChild(select);
+    if (state.settingsSelectedMember) {
+      modal.appendChild(el("div", { className: "share-checkboxes" },
+        el("label", { className: "share-checkbox" },
+          el("input", { type: "checkbox", checked: state.settingsMemberEditFiles, onChange: (e) => { state.settingsMemberEditFiles = e.target.checked; } }),
+          " Allow the user to edit files"
+        ),
+        el("label", { className: "share-checkbox" },
+          el("input", { type: "checkbox", checked: state.settingsMemberChangeName, onChange: (e) => { state.settingsMemberChangeName = e.target.checked; } }),
+          " Allow the user to change project name"
+        ),
+        el("label", { className: "share-checkbox" },
+          el("input", { type: "checkbox", checked: state.settingsMemberFullAccess, onChange: (e) => { state.settingsMemberFullAccess = e.target.checked; } }),
+          " Allow full access to the user"
+        )
+      ));
+      modal.appendChild(el("button", { className: "btn-kill-sm", style: { marginTop: "8px" }, onClick: removeSharedMember }, "Remove user"));
+    }
+  } else {
+    modal.appendChild(el("div", { className: "share-error", style: { color: "var(--text-dim)" } }, "You only have permission to view and rename this project."));
+  }
+  modal.appendChild(el("div", { className: "modal-actions" },
+    el("button", { className: "btn-cancel", onClick: () => { state.showSettingsModal = false; scheduleRender(); } }, "Cancel"),
+    el("button", { className: "btn-new", onClick: saveSettings }, "Save settings")
+  ));
+  overlay.appendChild(modal);
+  return overlay;
+}
+
+function renderPasswordGate() {
+  const overlay = el("div", { className: "modal-overlay password-gate-overlay" });
+  const modal = el("div", { className: "modal" },
+    el("h2", {}, "Enter the project password:"),
+    el("input", { className: "modal-input", type: "password", value: state.projectUnlockInput, oninput: (e) => { state.projectUnlockInput = e.target.value; } }),
+    el("div", { className: "modal-actions" },
+      el("button", { className: "btn-new", onClick: unlockProject }, "Unlock")
+    )
+  );
+  overlay.appendChild(modal);
+  return overlay;
+}
+
 function saveProjects() {
   const proj = state.projects.find(x => state.currentProject && x.id === state.currentProject.id);
   if (proj && state.currentProject) {
@@ -846,10 +1093,19 @@ function render() {
   const existing = document.getElementById("search-modal-overlay");
   if (existing) existing.remove();
   document.querySelectorAll('.ai-chat-overlay').forEach(el => el.remove());
+  document.querySelectorAll('.share-modal-overlay, .settings-modal-overlay, .password-gate-overlay').forEach(el => el.remove());
   if (state.showSearchModal) {
     document.body.appendChild(renderSearchModal());
   }
   document.body.appendChild(renderAIChatButton());
+  if (state.page === "bot-dashboard" || state.page === "mc-dashboard") {
+    if (state.needsProjectPassword) {
+      document.body.appendChild(renderPasswordGate());
+    } else {
+      if (state.showShareModal) document.body.appendChild(renderShareModal());
+      if (state.showSettingsModal) document.body.appendChild(renderSettingsModal());
+    }
+  }
   if (state.showAIChat) {
     document.body.appendChild(renderAIChatUI());
   }
@@ -909,6 +1165,7 @@ function renderProjectsPage() {
         }, onfocus: function(){ state.showSearchModal = true; scheduleRender(); } }),
         el("button", { className: "btn-changelogs", onClick: function(){ history.pushState(null, "", "/dashboard/changelogs"); state.page = "changelogs"; state.viewChangelogSlug = null; fetchChangelogs(); scheduleRender(); } }, "Changelogs"),
         el("button", { className: "btn-changelogs", onClick: () => { history.pushState(null, "", "/ourapi"); state.page = "ourapi"; scheduleRender(); } }, "Our API"),
+        el("button", { className: "btn-changelogs", onClick: () => { window.location.href = "/inbox"; } }, "Inbox"),
         el("button", { className: "btn-new", onClick: () => { state.showNewModal = true; scheduleRender(); } }, 
           svgIcon("plus"), " New Project"
         )
@@ -1100,6 +1357,8 @@ function openProject(id) {
   state.botLogs = []; state.mcLogs = []; state.missingPackages = [];
   state.expandedFolders = [];
   state.currentFileTree = [];
+  state.projectAccess = null;
+  fetchProjectAccess(id);
   fetch('/api/projects/' + id + '/dir').then(r => r.json()).then(d => {
     if (d.success) {
       if (p.type === "minecraft") {
@@ -1272,7 +1531,9 @@ function renderBotDashboard() {
         svgIcon(p.running ? "stop" : "play"), p.running ? " Stop" : " Start"
       ),
       el("button", { className: "btn-kill-discord", onClick: () => { if (confirm("Force kill the bot?")) killProject(p); } }, "Kill"),
-      el("button", { className: "btn-restart-discord", onClick: () => restartProject(p) }, "Restart")
+      el("button", { className: "btn-restart-discord", onClick: () => restartProject(p) }, "Restart"),
+      el("button", { className: "btn-restart-discord", onClick: () => { state.showShareModal = true; scheduleRender(); } }, "Share"),
+      el("button", { className: "btn-restart-discord", onClick: () => { state.showSettingsModal = true; scheduleRender(); } }, svgIcon("gear"), " Settings")
     )
   ));
 
