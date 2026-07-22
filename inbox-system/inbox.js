@@ -41,6 +41,12 @@ function loadInbox() {
       body.className = 'inbox-item-body';
       body.textContent = m.body;
       item.appendChild(top);
+      if (m.rank) {
+        const rank = document.createElement('div');
+        rank.className = 'inbox-item-rank';
+        rank.textContent = m.rank;
+        item.appendChild(rank);
+      }
       item.appendChild(body);
       item.onclick = () => {
         if (!m.read) {
