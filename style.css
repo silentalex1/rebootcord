@@ -126,6 +126,18 @@ input,textarea,select{font-family:var(--font)}
 .modal-actions{display:flex;gap:12px;margin-top:24px}
 .btn-cancel{flex:1;background:var(--surface2);color:var(--text-dim);padding:12px;border-radius:10px;font-weight:700;font-size:13px;transition:.2s;border:1px solid var(--border)}
 .btn-cancel:hover{background:var(--surface3);color:var(--text);border-color:var(--border-bright)}
+.modal-label{display:block;font-size:12px;font-weight:700;color:var(--text-dim);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em}
+.modal-label:first-of-type{margin-top:0}
+.modal-input{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:11px 14px;color:var(--text);font-size:13px;outline:none;transition:.2s}
+.modal-input:focus{border-color:var(--red);box-shadow:0 0 0 3px var(--red-glow)}
+.modal-input:disabled{opacity:.5;cursor:not-allowed}
+.share-error{color:var(--red);font-size:12px;margin-top:8px}
+.share-checkboxes{display:flex;flex-direction:column;gap:10px;margin-top:16px}
+.share-checkbox{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--text-dim);cursor:pointer}
+.share-checkbox input{width:16px;height:16px;accent-color:var(--red);cursor:pointer;flex-shrink:0}
+.share-password-fade{max-height:0;opacity:0;overflow:hidden;animation:fadeSlideIn .28s ease forwards;margin-top:4px}
+@keyframes fadeSlideIn{from{max-height:0;opacity:0}to{max-height:120px;opacity:1}}
+.share-modal .share-checkboxes,.settings-modal .share-checkboxes{border-top:1px solid var(--border);padding-top:14px}
 .btn-create{flex:2;background:var(--red);color:#fff;padding:12px;border-radius:10px;font-weight:800;font-size:13px;transition:.2s}
 .btn-create.mc{background:var(--mc-bright);color:#000}
 .btn-create:hover{filter:brightness(1.1);transform:translateY(-1px);box-shadow:0 4px 12px var(--red-glow)}
