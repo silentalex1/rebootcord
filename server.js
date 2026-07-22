@@ -145,8 +145,10 @@ function scanProjectDeps(pDir, lang) {
     if (fs.existsSync(reqPath)) {
       try {
         fs.readFileSync(reqPath, 'utf8').split(/\r?\n/).forEach((line) => {
-          const name = line.split(/[=<>!~\[; ]/)[0].trim();
-          if (name) set.add(name);
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('-')) return;
+          const name = trimmed.split(/[=<>!~\[; ]/)[0].trim();
+          if (name) set.add(name.toLowerCase() === 'discord' ? 'discord.py' : name);
         });
       } catch (e) {}
     }
@@ -163,6 +165,28 @@ function scanProjectDeps(pDir, lang) {
   return Array.from(set);
 }
 
+function parseEnvFile(content) {
+  const out = {};
+  content.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const idx = trimmed.indexOf('=');
+    if (idx === -1) return;
+    let key = trimmed.slice(0, idx).trim();
+    let val = trimmed.slice(idx + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (key) out[key] = val;
+  });
+  return out;
+}
+
+function depsHash(pkgs) {
+  const sorted = Array.from(new Set(pkgs)).map(p => String(p).toLowerCase()).sort();
+  return crypto.createHash('sha256').update(sorted.join(',')).digest('hex');
+}
+
 function sanitizePkgName(name) {
   const v = String(name || '').trim();
   if (!/^[a-zA-Z0-9_.\-\[\]@/]+$/.test(v)) return null;
@@ -170,11 +194,18 @@ function sanitizePkgName(name) {
   return v;
 }
 
+const HIDDEN_TREE_DIRS = new Set(['modules', 'node_modules', '__pycache__', '.git']);
+const HIDDEN_TREE_EXTS = new Set(['.pyc', '.pyo', '.so', '.dist-info', '.egg-info']);
+
 function getDirTree(dir, base) {
   const res = [];
   let ents = [];
   try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return res; }
   for (const ent of ents) {
+    if (!base && HIDDEN_TREE_DIRS.has(ent.name)) continue;
+    if (ent.name.endsWith('.dist-info') || ent.name.endsWith('.egg-info')) continue;
+    const ext = path.extname(ent.name).toLowerCase();
+    if (!ent.isDirectory() && HIDDEN_TREE_EXTS.has(ext)) continue;
     const full = path.join(dir, ent.name);
     let stat;
     try { stat = fs.statSync(full); } catch (e) { continue; }
@@ -325,13 +356,13 @@ wss.on('connection', (ws, req) => {
             const modulesDir = path.join(pDir, 'modules');
             if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
           }
-          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary "${pkg}" --target ./modules` : `npm install --no-audit --no-fund --prefer-offline "${pkg}"`;
+          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary --upgrade "${pkg}" --target ./modules` : `npm install --no-audit --no-fund --prefer-offline "${pkg}"`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
           cp.exec(cmd, { cwd: pDir, shell: true, timeout: 8 * 60 * 1000, maxBuffer: 1024 * 1024 * 30 }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
-            else broadcastLog(user, p.id, `[PKG] Installed ${pkg}`, 'ok');
+            else { broadcastLog(user, p.id, `[PKG] Installed ${pkg}`, 'ok'); p.depsInstalled = false; saveDB(); }
             broadcastEvent(user, { event: 'installDone', projectId: p.id, pkg, success: !err });
           });
         }
@@ -352,9 +383,20 @@ wss.on('connection', (ws, req) => {
             if (safe) merged.add(safe);
           });
           pkgs = Array.from(merged);
+          if (!pkgs.length) {
+            broadcastLog(user, p.id, `[PKG] No dependencies found to install`, 'warn');
+            broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: true, count: 0 });
+            return;
+          }
+          const modulesDir = path.join(pDir, p.lang === 'Python' ? 'modules' : 'node_modules');
+          const newHash = depsHash(pkgs);
+          if (!data.force && p.depsInstalled && p.depsHash === newHash && fs.existsSync(modulesDir)) {
+            broadcastLog(user, p.id, `[PKG] Dependencies already up to date (${pkgs.length} package${pkgs.length === 1 ? '' : 's'})`, 'ok');
+            broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: true, count: pkgs.length, skipped: true });
+            return;
+          }
           broadcastLog(user, p.id, `[PKG] Detected ${pkgs.length} dependenc${pkgs.length === 1 ? 'y' : 'ies'}${pkgs.length ? ': ' + pkgs.join(', ') : ''}`, 'info');
           if (p.lang === 'Python') {
-            const modulesDir = path.join(pDir, 'modules');
             if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
             const req = path.join(pDir, 'requirements.txt');
             let cur = fs.existsSync(req) ? fs.readFileSync(req, 'utf8') : '';
@@ -369,18 +411,20 @@ wss.on('connection', (ws, req) => {
             pkgs.forEach(pk => { if (!obj.dependencies[pk]) obj.dependencies[pk] = '*'; });
             fs.writeFileSync(pj, JSON.stringify(obj, null, 2));
           }
-          if (!pkgs.length) {
-            broadcastLog(user, p.id, `[PKG] No dependencies found to install`, 'warn');
-            broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: true, count: 0 });
-            return;
-          }
-          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary -r requirements.txt --target ./modules` : `npm install --no-audit --no-fund --prefer-offline --no-package-lock`;
+          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary --upgrade -r requirements.txt --target ./modules` : `npm install --no-audit --no-fund --prefer-offline --no-package-lock`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
           cp.exec(cmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
-            if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
-            else broadcastLog(user, p.id, `[PKG] Installed all ${pkgs.length} package${pkgs.length === 1 ? '' : 's'} successfully`, 'ok');
+            if (err) {
+              broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
+              p.depsInstalled = false;
+            } else {
+              broadcastLog(user, p.id, `[PKG] Installed all ${pkgs.length} package${pkgs.length === 1 ? '' : 's'} successfully`, 'ok');
+              p.depsInstalled = true;
+              p.depsHash = newHash;
+              saveDB();
+            }
             broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: !err, count: pkgs.length });
           });
         }
@@ -566,10 +610,22 @@ app.post('/api/projects/:id/unshare', (req, res) => {
   const p = (user.projects || []).find(x => String(x.id) === req.params.id);
   if (!p) return res.json({ success: false });
   const removedUser = req.body.username;
+  const wasShared = (p.shared || []).some(x => x.username === removedUser);
   p.shared = (p.shared || []).filter(x => x.username !== removedUser);
   delete unlockedAccess[removedUser + '::' + req.params.id];
-  db.inboxMessages = db.inboxMessages || [];
-  db.inboxMessages.unshift({ id: Date.now(), title: `Removed from project`, body: `${user.username} has removed you from their project.`, ts: Date.now(), readBy: [], sender: user.username, rank: 'staff' });
+  if (wasShared) {
+    db.inboxMessages = db.inboxMessages || [];
+    db.inboxMessages.unshift({
+      id: Date.now(),
+      title: `Removed from "${p.name}"`,
+      body: `${user.username} removed you from the project "${p.name}". You no longer have access to its files or console.`,
+      ts: Date.now(),
+      readBy: [],
+      sender: user.username,
+      rank: 'notice',
+      recipient: removedUser
+    });
+  }
   saveDB();
   res.json({ success: true, shared: p.shared });
 });
@@ -642,12 +698,14 @@ app.get('/api/shared-projects', (req, res) => {
 app.get('/api/inbox', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false, messages: [] });
-  const msgs = (db.inboxMessages || []).map(m => ({
-    id: m.id, title: m.title, body: m.body, ts: m.ts,
-    read: (m.readBy || []).includes(u),
-    sender: m.sender,
-    rank: m.rank
-  }));
+  const msgs = (db.inboxMessages || [])
+    .filter(m => !m.recipient || m.recipient === u)
+    .map(m => ({
+      id: m.id, title: m.title, body: m.body, ts: m.ts,
+      read: (m.readBy || []).includes(u),
+      sender: m.sender,
+      rank: m.rank
+    }));
   res.json({ success: true, messages: msgs });
 });
 
@@ -733,6 +791,20 @@ app.get('/api/projects/:id/detect-deps', (req, res) => {
     packages = scanProjectDeps(pDir, p.lang || 'Python');
   } catch (e) {}
   res.json({ success: true, packages });
+});
+
+app.get('/api/projects/:id/deps-status', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user && user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  let packages = [];
+  try { packages = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) {}
+  const modulesDir = path.join(pDir, p.lang === 'Python' ? 'modules' : 'node_modules');
+  const upToDate = !!p.depsInstalled && p.depsHash === depsHash(packages) && fs.existsSync(modulesDir);
+  res.json({ success: true, upToDate, packages });
 });
 
 app.get('/api/projects/:id/dir', (req, res) => {
@@ -1026,11 +1098,11 @@ app.post('/api/projects/:id/start', async (req, res) => {
         fs.writeFileSync(filePath, p.files[fname]);
       }
     }
-    const cmd = p.lang === 'Python' ? 'python3' : 'node';
     const mainFile = Object.keys(p.files || {})[0] || (p.lang === 'Python' ? 'main.py' : 'index.js');
-    
+
     const envVars = { ...process.env, BOT_TOKEN: p.botToken || '', TOKEN: p.botToken || '' };
-    if (p.lang === 'Python') envVars.PYTHONPATH = path.join(pDir, 'modules');
+    const modulesDir = path.join(pDir, 'modules');
+    if (p.lang === 'Python') envVars.PYTHONPATH = modulesDir;
 
     try {
       const envP = path.join(pDir, '.env');
@@ -1039,9 +1111,22 @@ app.post('/api/projects/:id/start', async (req, res) => {
         ec = ec.trim() + `\nBOT_TOKEN=${p.botToken}\n`;
         fs.writeFileSync(envP, ec.trim() + '\n');
       }
+      const parsedEnv = parseEnvFile(ec);
+      Object.assign(envVars, parsedEnv);
+      if (parsedEnv.DISCORD_TOKEN && !parsedEnv.BOT_TOKEN) envVars.BOT_TOKEN = parsedEnv.DISCORD_TOKEN;
+      if (parsedEnv.TOKEN && !parsedEnv.BOT_TOKEN) envVars.BOT_TOKEN = parsedEnv.TOKEN;
     } catch(e) {}
 
-    const proc = cp.spawn(cmd, ['-u', mainFile], { cwd: pDir, env: envVars, shell: true, detached: true });
+    let cmd, args;
+    if (p.lang === 'Python') {
+      cmd = 'python3';
+      args = ['-u', '-c', 'import sys, runpy; modules_dir, main_file = sys.argv[1], sys.argv[2]; sys.path.insert(0, modules_dir); sys.argv = [main_file]; runpy.run_path(main_file, run_name="__main__")', modulesDir, mainFile];
+    } else {
+      cmd = 'node';
+      args = [mainFile];
+    }
+
+    const proc = cp.spawn(cmd, args, { cwd: pDir, env: envVars, shell: p.lang === 'Python' ? false : true, detached: true });
     procs[p.id] = proc;
     let missingPkgs = new Set();
     proc.on('error', (err) => { broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err'); p.running=false; saveDB(); });
