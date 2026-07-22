@@ -8,13 +8,13 @@
     "ollama:finetune-scaffold": "python finetune_scaffold.py"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "axios": "^1.7.2",
-    "ws": "^8.17.0",
-    "multer": "^1.4.5-lts.1",
+    "express": "^4.21.2",
+    "axios": "^1.13.2",
+    "ws": "^8.18.0",
+    "multer": "^2.0.1",
     "cors": "^2.8.5",
     "helmet": "^7.1.0",
     "express-rate-limit": "^7.1.5",
-    "bcrypt": "^5.1.1"
+    "bcrypt": "^6.0.0"
   }
 }
