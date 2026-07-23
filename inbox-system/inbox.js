@@ -60,7 +60,23 @@ function loadInbox() {
 
       const body = document.createElement('div');
       body.className = 'inbox-item-body';
-      body.textContent = m.body;
+      if (m.linkText && m.linkUrl && m.body.indexOf(m.linkText) !== -1) {
+        const idx = m.body.indexOf(m.linkText);
+        const before = m.body.slice(0, idx);
+        const after = m.body.slice(idx + m.linkText.length);
+        if (before) body.appendChild(document.createTextNode(before));
+        const a = document.createElement('a');
+        a.href = m.linkUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.className = 'inbox-item-link';
+        a.textContent = m.linkText;
+        a.onclick = (ev) => ev.stopPropagation();
+        body.appendChild(a);
+        if (after) body.appendChild(document.createTextNode(after));
+      } else {
+        body.textContent = m.body;
+      }
 
       main.appendChild(top);
       if (m.rank && !isNotice) {
