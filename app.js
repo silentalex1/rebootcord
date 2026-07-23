@@ -1,5 +1,6 @@
-const MC_VERSIONS = [
-  "1.21.5","1.21.4","1.21.3","1.21.2","1.21.1","1.21",
+let MC_VERSIONS = [
+  "26.2","26.1.2","26.1.1","26.1",
+  "1.21.11","1.21.10","1.21.9","1.21.8","1.21.7","1.21.6","1.21.5","1.21.4","1.21.3","1.21.2","1.21.1","1.21",
   "1.20.6","1.20.5","1.20.4","1.20.3","1.20.2","1.20.1","1.20",
   "1.19.4","1.19.3","1.19.2","1.19.1","1.19",
   "1.18.2","1.18.1","1.18","1.17.1","1.17",
@@ -9,9 +10,7 @@ const MC_VERSIONS = [
 ];
 const BOT_LANGS = ["JavaScript","TypeScript","Python","Lua","Java","Go","Rust","Ruby","C#","PHP","Kotlin","Dart"];
 const MC_SERVER_TYPES = ["Vanilla","Paper","Forge","Fabric","Spigot","Purpur"];
-const MAX_LOGS = 400;
-const EDITOR_HIGHLIGHT_MAX_CHARS = 120000;
-const EDITOR_HIGHLIGHT_MAX_LINES = 4000;
+const MAX_LOGS = 500;
 
 const FONTS = [
   { label: "Default", value: "" },
@@ -33,16 +32,16 @@ const API_BASE = (() => {
 const state = {
   page: "projects",
   projects: [],
-  sharedProjects: [],
   currentProject: null,
   showNewModal: false,
   loading: false,
   newType: "discord",
   newName: "",
   newLang: "JavaScript",
-  newMcVersion: "1.21.5",
+  newMcVersion: "26.2",
   newMcServerType: "Vanilla",
   newMcIp: "",
+  newMcDomain: "",
   editorFile: "",
   codeContent: "",
   originalCodeContent: "",
@@ -85,186 +84,110 @@ const state = {
   isAdmin: false,
   currentFeedbackUser: null,
   showFeedbackManagement: false,
-  feedbackChatUsers: [],
-  showShareModal: false,
-  shareUsername: "",
-  shareEditFiles: false,
-  shareChangeName: false,
-  shareFullAccess: false,
-  sharePrivate: false,
-  sharePassword: "",
-  shareError: "",
-  showSettingsModal: false,
-  settingsName: "",
-  settingsPassword: "",
-  settingsPrivate: false,
-  settingsSelectedMember: "",
-  settingsMemberEditFiles: false,
-  settingsMemberChangeName: false,
-  settingsMemberFullAccess: false,
-  projectAccess: null,
-  needsProjectPassword: false,
-  projectUnlockInput: "",
-  inboxUnread: false,
-  inboxUnreadCount: 0,
-  showInboxNotification: false,
-  shareInvites: [],
-  showShareInviteNotification: false,
-  knownInboxIds: null,
-  lastInboxNotifyId: null
+  feedbackChatUsers: []
 };
-
-const BASE_DOC_TITLE = "Reboot Cord";
-const NOTIF_PERM_KEY = "rc_notif_perm_asked";
-const NOTIF_DENIED_KEY = "rc_notif_denied";
 
 let ws;
 let searchTimeout = null;
-let wsReconnectDelay = 400;
-let wsHeartbeatTimer = null;
-let wsPingTimer = null;
-let actionLocks = {};
 
-function setProjectRunning(projectId, running) {
-  const id = String(projectId);
-  const p = state.projects.find(function(x){ return String(x.id) === id; });
-  if (p) p.running = !!running;
-  if (state.currentProject && String(state.currentProject.id) === id) state.currentProject.running = !!running;
-  const sp = state.sharedProjects.find(function(x){ return String(x.id) === id; });
-  if (sp) sp.running = !!running;
+function safeJson(r) {
+  return r.text().then(function(t) {
+    if (!t) return { success: false, message: "Empty response (" + r.status + ")" };
+    try { return JSON.parse(t); } catch (e) {
+      return { success: false, message: "Invalid JSON (" + r.status + ")", raw: t.slice(0, 200) };
+    }
+  });
 }
 
-function clearWsTimers() {
-  if (wsHeartbeatTimer) { clearInterval(wsHeartbeatTimer); wsHeartbeatTimer = null; }
-  if (wsPingTimer) { clearTimeout(wsPingTimer); wsPingTimer = null; }
+function applyProjectRunning(projectId, running) {
+  const pp = state.projects.find(function(x){ return String(x.id) === String(projectId); });
+  if (pp) pp.running = !!running;
+  if (state.currentProject && String(state.currentProject.id) === String(projectId)) {
+    state.currentProject.running = !!running;
+  }
 }
 
 function connectWS() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  try { if (ws) { ws.onclose = null; ws.onerror = null; ws.onmessage = null; ws.close(); } } catch (e) {}
-  clearWsTimers();
-  ws = new WebSocket(protocol + '//' + location.host);
-  ws.onopen = function() {
-    wsReconnectDelay = 400;
-    clearWsTimers();
-    wsHeartbeatTimer = setInterval(function() {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({ event: 'ping', t: Date.now() })); } catch (e) {}
-      }
-    }, 12000);
-  };
+  const base = API_BASE || (location.protocol + '//' + location.host);
+  let hostPart = location.host;
+  try {
+    if (API_BASE) hostPart = new URL(API_BASE, location.href).host;
+  } catch (e) {}
+  ws = new WebSocket(protocol + '//' + hostPart);
   ws.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
-      if (data.event === 'pong') return;
       if (data.event === 'status') {
-        setProjectRunning(data.projectId, !!data.running);
-        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-          patchRunningStatus(!!data.running);
-        } else if (state.page === 'projects') {
-          scheduleRender();
-        }
-        return;
+        applyProjectRunning(data.projectId, data.running);
+        scheduleRender();
       }
       if (data.event === 'log') {
-        const p = state.projects.find(x => String(x.id) === String(data.projectId)) || state.sharedProjects.find(x => String(x.id) === String(data.projectId));
-        if (!p && !(state.currentProject && String(state.currentProject.id) === String(data.projectId))) return;
-        const projType = (p && p.type) || (state.currentProject && state.currentProject.type) || 'discord';
-        const isMc = projType === 'minecraft';
-        const tgt = isMc ? state.mcLogs : state.botLogs;
-        const logEntry = { t: getTime(), type: data.type, msg: data.msg };
-        tgt.push(logEntry);
+        const p = state.projects.find(x => String(x.id) === String(data.projectId));
+        if (!p) return;
+        const tgt = p.type === 'minecraft' ? state.mcLogs : state.botLogs;
+        tgt.push({ t: getTime(), type: data.type, msg: data.msg });
         trimLogs(tgt);
 
-        let needFullRender = false;
         const m1 = data.msg.match(/Missing package: (.+)/);
         if (m1 && m1[1]) {
           const pk = m1[1].trim();
-          if (pk && state.missingPackages.indexOf(pk) === -1) {
-            state.missingPackages.push(pk);
-            needFullRender = true;
-          }
+          if (pk && state.missingPackages.indexOf(pk) === -1) state.missingPackages.push(pk);
         }
         const m2 = data.msg.match(/ModuleNotFoundError: No module named '([^']+)'/);
         if (m2 && m2[1]) {
           const pk = m2[1].trim();
-          if (pk && state.missingPackages.indexOf(pk) === -1) {
-            state.missingPackages.push(pk);
-            needFullRender = true;
-          }
+          if (pk && state.missingPackages.indexOf(pk) === -1) state.missingPackages.push(pk);
         }
-
-        if (data.msg && (data.msg.indexOf("Process exited") !== -1 || data.msg.indexOf("forcefully killed") !== -1 || data.msg.indexOf("Process stopped") !== -1 || data.msg.indexOf("stopped manually") !== -1)) {
-          setProjectRunning(data.projectId, false);
-          if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) patchRunningStatus(false);
+        const m3 = data.msg.match(/Cannot find module '([^']+)'/);
+        if (m3 && m3[1]) {
+          const pk = m3[1].trim().split('/')[0];
+          if (pk && state.missingPackages.indexOf(pk) === -1) state.missingPackages.push(pk);
         }
+        
         if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-          if (needFullRender) scheduleRender();
-          else if (!appendConsoleLogLine(logEntry, isMc)) scheduleRender();
-        } else if (state.page === 'projects') {
+          if (data.msg && (data.msg.indexOf("Process exited") !== -1 || data.msg.indexOf("forcefully killed") !== -1 || data.msg.indexOf("Process stopped") !== -1 || data.msg.indexOf("Start failed") !== -1 || data.msg.indexOf("Host online") !== -1 || data.msg.indexOf("successfully started") !== -1)) {
+            if (data.msg.indexOf("Host online") !== -1 || data.msg.indexOf("successfully started") !== -1) applyProjectRunning(data.projectId, true);
+            if (data.msg.indexOf("Process exited") !== -1 || data.msg.indexOf("forcefully killed") !== -1 || data.msg.indexOf("Process stopped") !== -1 || data.msg.indexOf("Start failed") !== -1) applyProjectRunning(data.projectId, false);
+          }
           scheduleRender();
         }
       }
       if (data.event === 'installAllDone' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
         state.installingAll = false;
-        state.lastInstallResult = { success: data.success, count: data.count, upToDate: !!data.skipped, at: getTime() };
+        state.lastInstallResult = { success: data.success, count: data.count, at: getTime() };
+        if (data.success) state.missingPackages = [];
         scheduleRender();
       }
       if (data.event === 'installDone' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
         state.installingPkg = false;
+        if (data.success && data.pkg) {
+          state.missingPackages = (state.missingPackages || []).filter(function(x){ return x !== data.pkg; });
+        }
         scheduleRender();
-      }
-      if (data.event === 'removedFromProject') {
-        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-          showKickedOverlay();
-        }
-        fetchSharedProjects();
-      }
-      if (data.event === 'addedToProject') {
-        fetchSharedProjects();
-        checkShareInvites();
-      }
-      if (data.event === 'inboxMessage') {
-        const msg = data.message || {};
-        if (msg.id) {
-          if (!state.knownInboxIds) state.knownInboxIds = {};
-          if (!state.knownInboxIds[String(msg.id)]) {
-            state.knownInboxIds[String(msg.id)] = true;
-            state.lastInboxNotifyId = msg.id;
-            state.inboxUnreadCount = (state.inboxUnreadCount || 0) + 1;
-            updateDocumentTitle(state.inboxUnreadCount);
-            showBrowserInboxNotification(msg.body || msg.title || "You have a new inbox message.", msg.id);
-            state.showInboxNotification = true;
-            scheduleRender();
-          }
-        }
-        checkInbox({ showOverlayOnLoad: false });
       }
     } catch(err) {}
   };
-  ws.onerror = function() {
-    try { if (ws) ws.close(); } catch (e) {}
-  };
   ws.onclose = () => {
-    clearWsTimers();
-    const delay = wsReconnectDelay;
-    wsReconnectDelay = Math.min(wsReconnectDelay * 1.6, 5000);
-    setTimeout(connectWS, delay);
+    setTimeout(connectWS, 2000);
+  };
+  ws.onerror = () => {
+    try { ws.close(); } catch (e) {}
   };
 }
 
 connectWS();
 
-document.addEventListener('visibilitychange', function() {
-  if (document.visibilityState === 'visible') {
-    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-      wsReconnectDelay = 400;
-      connectWS();
-    } else if (ws.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify({ event: 'ping', t: Date.now() })); } catch (e) {}
+function loadMcVersions() {
+  fetch((API_BASE || "") + "/api/mc/versions").then(safeJson).then(function(d) {
+    if (d && d.success && Array.isArray(d.versions) && d.versions.length) {
+      MC_VERSIONS = d.versions;
+      if (MC_VERSIONS.indexOf(state.newMcVersion) === -1) state.newMcVersion = MC_VERSIONS[0];
+      if (state.showNewModal) scheduleRender();
     }
-  }
-});
+  }).catch(function(){});
+}
+loadMcVersions();
 
 let renderPending = false;
 
@@ -290,276 +213,8 @@ function trimLogs(arr) {
   }
 }
 
-function appendConsoleLogLine(log, isMc) {
-  const sel = isMc ? ".mc-console-body" : ".console-body";
-  const body = document.querySelector(sel);
-  if (!body) return false;
-  const empty = body.querySelector('[data-console-empty="1"]');
-  if (empty) empty.remove();
-  while (body.children.length >= MAX_LOGS) {
-    body.removeChild(body.firstChild);
-  }
-  const row = document.createElement("div");
-  row.className = "log-line";
-  const t = document.createElement("span");
-  t.className = "log-time";
-  t.textContent = log.t;
-  const m = document.createElement("span");
-  m.className = "log-" + (log.type || "info");
-  m.textContent = log.msg;
-  row.appendChild(t);
-  row.appendChild(m);
-  body.appendChild(row);
-  body.scrollTop = body.scrollHeight;
-  return true;
-}
-
-function patchRunningStatus(running) {
-  document.querySelectorAll(".status-chip").forEach(function(chip) {
-    const isDiscord = chip.classList.contains("discord") || chip.closest(".discord-nav");
-    chip.className = "status-chip" + (running ? (isDiscord ? " discord" : "") : " stopped");
-    const dot = chip.querySelector(".status-dot");
-    if (dot) dot.className = "status-dot" + (running ? (isDiscord ? " discord" : "") : " stopped");
-    const textNode = Array.from(chip.childNodes).find(function(n) { return n.nodeType === 3; });
-    if (textNode) textNode.textContent = running ? " Running" : " Stopped";
-    else {
-      const labels = chip.querySelectorAll("span,div");
-    }
-    chip.childNodes.forEach(function(n) {
-      if (n.nodeType === 3) n.textContent = running ? " Running" : " Stopped";
-    });
-  });
-  document.querySelectorAll(".btn-stop-discord,.btn-start-discord,.btn-stop,.btn-start").forEach(function(btn) {
-    const isDiscord = btn.classList.contains("btn-stop-discord") || btn.classList.contains("btn-start-discord");
-    if (running) {
-      btn.className = isDiscord ? "btn-stop-discord" : "btn-stop";
-    } else {
-      btn.className = isDiscord ? "btn-start-discord" : "btn-start";
-    }
-  });
-}
-
 function getTime() {
   return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-function updateDocumentTitle(count) {
-  const n = Math.max(0, Number(count) || 0);
-  state.inboxUnreadCount = n;
-  state.inboxUnread = n > 0;
-  const next = n > 0 ? (BASE_DOC_TITLE + " (" + n + ")") : BASE_DOC_TITLE;
-  if (document.title !== next) document.title = next;
-  try {
-    if (n > 0) document.documentElement.setAttribute("data-inbox-unread", String(n));
-    else document.documentElement.removeAttribute("data-inbox-unread");
-  } catch (e) {}
-}
-
-function ensureNotifPromptStyles() {
-  if (document.getElementById("rc-notif-prompt-style")) return;
-  const style = document.createElement("style");
-  style.id = "rc-notif-prompt-style";
-  style.textContent = ".rc-notif-prompt{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147483001;display:flex;align-items:center;gap:12px;max-width:min(520px,92vw);padding:12px 14px;border-radius:12px;background:#121212;border:1px solid #2d2d2d;box-shadow:0 12px 40px rgba(0,0,0,.45);font-family:var(--font),sans-serif;color:#e8e8ec}.rc-notif-prompt-text{font-size:13px;line-height:1.4;flex:1}.rc-notif-prompt-actions{display:flex;gap:8px;flex-shrink:0}.rc-notif-prompt-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer}.rc-notif-prompt-btn.primary{background:#e63946;color:#fff}.rc-notif-prompt-btn.ghost{background:#1e1e1e;color:#9a9aa2;border:1px solid #2d2d2d}";
-  document.head.appendChild(style);
-}
-
-function hideNotifPrompt() {
-  const el = document.getElementById("rc-notif-prompt");
-  if (el && el.parentNode) el.parentNode.removeChild(el);
-}
-
-function showNotifPermissionPrompt() {
-  if (typeof Notification === "undefined") return;
-  if (Notification.permission !== "default") return;
-  if (document.getElementById("rc-notif-prompt")) return;
-  ensureNotifPromptStyles();
-  const box = document.createElement("div");
-  box.id = "rc-notif-prompt";
-  box.className = "rc-notif-prompt";
-  const text = document.createElement("div");
-  text.className = "rc-notif-prompt-text";
-  text.textContent = "Allow notifications so you get alerted for new inbox messages.";
-  const actions = document.createElement("div");
-  actions.className = "rc-notif-prompt-actions";
-  const allow = document.createElement("button");
-  allow.className = "rc-notif-prompt-btn primary";
-  allow.type = "button";
-  allow.textContent = "Allow";
-  const later = document.createElement("button");
-  later.className = "rc-notif-prompt-btn ghost";
-  later.type = "button";
-  later.textContent = "Not now";
-  allow.onclick = function() {
-    hideNotifPrompt();
-    requestNotificationPermission(true);
-  };
-  later.onclick = function() {
-    try { localStorage.setItem(NOTIF_PERM_KEY, "dismissed"); } catch (e) {}
-    hideNotifPrompt();
-  };
-  actions.appendChild(later);
-  actions.appendChild(allow);
-  box.appendChild(text);
-  box.appendChild(actions);
-  document.body.appendChild(box);
-}
-
-function requestNotificationPermission(force) {
-  if (typeof Notification === "undefined") return Promise.resolve("unsupported");
-  if (Notification.permission === "granted") {
-    try { localStorage.setItem(NOTIF_PERM_KEY, "granted"); } catch (e) {}
-    hideNotifPrompt();
-    return Promise.resolve("granted");
-  }
-  if (Notification.permission === "denied") {
-    try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); localStorage.setItem(NOTIF_PERM_KEY, "denied"); } catch (e) {}
-    hideNotifPrompt();
-    return Promise.resolve("denied");
-  }
-  if (!force) {
-    let status = "";
-    try { status = localStorage.getItem(NOTIF_PERM_KEY) || ""; } catch (e) {}
-    if (status === "dismissed") return Promise.resolve("default");
-    if (document.body) showNotifPermissionPrompt();
-    else document.addEventListener("DOMContentLoaded", showNotifPermissionPrompt, { once: true });
-    return Promise.resolve("default");
-  }
-  return Notification.requestPermission().then(function(p) {
-    try { localStorage.setItem(NOTIF_PERM_KEY, p || "default"); } catch (e) {}
-    if (p === "denied") {
-      try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); } catch (e) {}
-    }
-    if (p === "granted") hideNotifPrompt();
-    return p;
-  }).catch(function() { return "default"; });
-}
-
-function bindNotificationGestureAsk() {
-  if (window.__rcNotifGestureBound) return;
-  window.__rcNotifGestureBound = true;
-  const tryAsk = function() {
-    if (typeof Notification === "undefined") return;
-    if (Notification.permission !== "default") return;
-    let status = "";
-    try { status = localStorage.getItem(NOTIF_PERM_KEY) || ""; } catch (e) {}
-    if (status === "dismissed" || status === "denied") return;
-    requestNotificationPermission(true);
-  };
-  ["pointerdown", "click", "keydown", "touchstart"].forEach(function(ev) {
-    document.addEventListener(ev, tryAsk, { once: true, capture: true, passive: true });
-  });
-}
-
-function showBrowserInboxNotification(messageText, messageId) {
-  if (typeof Notification === "undefined") return;
-  if (Notification.permission !== "granted") {
-    if (Notification.permission === "default") showNotifPermissionPrompt();
-    return;
-  }
-  try {
-    const n = new Notification("New inbox message has been added check it out", {
-      body: String(messageText || "You have a new inbox message."),
-      tag: messageId ? ("rc-inbox-" + String(messageId)) : "rc-inbox",
-      renotify: true,
-      silent: false
-    });
-    n.onclick = function() {
-      try { window.focus(); } catch (e) {}
-      window.location.href = "/inbox";
-      try { n.close(); } catch (e2) {}
-    };
-    setTimeout(function() { try { n.close(); } catch (e3) {} }, 12000);
-  } catch (e) {}
-}
-
-function applyInboxState(messages, opts) {
-  opts = opts || {};
-  const list = Array.isArray(messages) ? messages : [];
-  const unread = list.filter(function(m) { return !m.read; });
-  const ids = {};
-  list.forEach(function(m) { ids[String(m.id)] = true; });
-  const prevKnown = state.knownInboxIds;
-  const isFirstLoad = prevKnown === null;
-  const fresh = [];
-  if (!isFirstLoad) {
-    list.forEach(function(m) {
-      if (!prevKnown[String(m.id)]) fresh.push(m);
-    });
-  }
-  state.knownInboxIds = ids;
-  updateDocumentTitle(unread.length);
-
-  if (fresh.length) {
-    fresh.forEach(function(msg) {
-      if (String(msg.id) === String(state.lastInboxNotifyId)) return;
-      state.lastInboxNotifyId = msg.id;
-      showBrowserInboxNotification(msg.body || msg.title || "You have a new inbox message.", msg.id);
-    });
-    state.showInboxNotification = true;
-    scheduleRender();
-  } else if (!isFirstLoad && unread.length === 0) {
-    state.showInboxNotification = false;
-  } else if (isFirstLoad && unread.length > 0 && opts.showOverlayOnLoad !== false) {
-    state.showInboxNotification = true;
-    scheduleRender();
-  }
-}
-
-function checkInbox(opts) {
-  return fetch('/api/inbox', { cache: "no-store" }).then(r => r.json()).then(data => {
-    if (data && data.success && data.messages) {
-      applyInboxState(data.messages, opts || {});
-    }
-    return data;
-  }).catch(function() { return null; });
-}
-
-function startInboxLive() {
-  if (window.__rcInboxLiveStarted) return;
-  window.__rcInboxLiveStarted = true;
-  setInterval(function() { checkInbox({ showOverlayOnLoad: false }); }, 2000);
-  document.addEventListener("visibilitychange", function() {
-    if (document.visibilityState === "visible") checkInbox({ showOverlayOnLoad: false });
-  });
-  window.addEventListener("focus", function() { checkInbox({ showOverlayOnLoad: false }); });
-  window.addEventListener("pageshow", function() { checkInbox({ showOverlayOnLoad: false }); });
-}
-
-function fetchSharedProjects() {
-  fetch('/api/shared-projects').then(r => r.json()).then(data => {
-    if (data.success && data.projects) {
-      state.sharedProjects = data.projects;
-      scheduleRender();
-    }
-  }).catch(() => {});
-}
-
-function checkShareInvites() {
-  fetch('/api/share-invites').then(r => r.json()).then(data => {
-    if (data.success && data.invites && data.invites.length) {
-      state.shareInvites = data.invites;
-      state.showShareInviteNotification = true;
-      scheduleRender();
-    }
-  }).catch(() => {});
-}
-
-function acknowledgeShareInvite(invite) {
-  fetch('/api/share-invites/ack', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: invite.id })
-  }).finally(() => {
-    state.shareInvites = state.shareInvites.filter(x => x.id !== invite.id);
-    if (state.shareInvites.length === 0) state.showShareInviteNotification = false;
-    fetch('/api/projects').then(r => r.json()).then(pd => {
-      if (pd && pd.projects) state.projects = pd.projects;
-      state.page = 'projects';
-      history.pushState(null, '', '/dashboard');
-      fetchSharedProjects();
-      scheduleRender();
-    }).catch(() => scheduleRender());
-  });
 }
 
 function detectDependencies(code, lang) {
@@ -589,59 +244,26 @@ function detectDependencies(code, lang) {
   return Array.from(deps);
 }
 
-function withActionLock(id, fn) {
-  const key = String(id);
-  if (actionLocks[key]) return Promise.resolve({ success: false, busy: true });
-  actionLocks[key] = true;
-  return Promise.resolve().then(fn).finally(function() {
-    setTimeout(function() { delete actionLocks[key]; }, 250);
-  });
-}
-
 function killProject(p) {
-  if (!p) return Promise.resolve();
-  return withActionLock(p.id, function() {
-    setProjectRunning(p.id, false);
-    scheduleRender();
-    return fetch("/api/projects/" + p.id + "/kill", { method: "POST" })
-      .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
-      .then(function(data){
-        setProjectRunning(p.id, false);
-        scheduleRender();
-        return data;
-      })
-      .catch(function(){
-        setProjectRunning(p.id, false);
-        scheduleRender();
-        return { success: false };
-      });
-  });
+  if (!p) return;
+  applyProjectRunning(p.id, false);
+  scheduleRender();
+  fetch((API_BASE || "") + "/api/projects/" + p.id + "/kill", { method: "POST" }).then(safeJson).catch(function(){});
 }
 
 function restartProject(p) {
-  if (!p) return Promise.resolve();
-  return withActionLock(p.id, function() {
-    setProjectRunning(p.id, false);
-    scheduleRender();
-    return fetch("/api/projects/" + p.id + "/kill", { method: "POST" })
-      .then(function(r){ return r.json().catch(function(){ return { success: true }; }); })
-      .then(function(){
-        return new Promise(function(resolve){ setTimeout(resolve, 450); });
-      })
-      .then(function(){
-        return fetch("/api/projects/" + p.id + "/start", { method: "POST" }).then(function(r){ return r.json().catch(function(){ return { success: false }; }); });
-      })
-      .then(function(data){
-        setProjectRunning(p.id, !!(data && data.success));
+  if (!p) return;
+  applyProjectRunning(p.id, false);
+  scheduleRender();
+  fetch((API_BASE || "") + "/api/projects/" + p.id + "/stop", { method: "POST" }).then(safeJson).then(function() {
+    setTimeout(function() {
+      fetch((API_BASE || "") + "/api/projects/" + p.id + "/start", { method: "POST" }).then(safeJson).then(function(data) {
+        if (data && data.success) applyProjectRunning(p.id, true);
+        else applyProjectRunning(p.id, false);
         scheduleRender();
-        return data;
-      })
-      .catch(function(){
-        setProjectRunning(p.id, false);
-        scheduleRender();
-        return { success: false };
-      });
-  });
+      }).catch(function(){ applyProjectRunning(p.id, false); scheduleRender(); });
+    }, 900);
+  }).catch(function(){});
 }
 
 function appendFileTree(listEl, items, p, isMc, lvl) {
@@ -813,42 +435,6 @@ function renderAIChatButton() {
   return btn;
 }
 
-function renderInboxNotification() {
-  if (!state.showInboxNotification) return null;
-  const countLabel = state.inboxUnreadCount > 0 ? String(state.inboxUnreadCount) : "unread";
-  const overlay = el("div", { className: "inbox-notification-overlay" },
-    el("div", { className: "inbox-notification-box" },
-      el("div", { className: "inbox-notification-header" },
-        el("div", { className: "inbox-notification-badge" }, countLabel),
-        el("button", { className: "inbox-notification-close", onClick: () => { state.showInboxNotification = false; scheduleRender(); } }, "X")
-      ),
-      el("div", { className: "inbox-notification-content" },
-        el("div", { className: "inbox-notification-title" }, "New inbox message has been added check it out"),
-        el("button", { className: "inbox-notification-btn", onClick: () => { window.location.href = "/inbox"; } }, "check it out")
-      )
-    )
-  );
-  return overlay;
-}
-
-function renderShareInviteNotification() {
-  if (!state.showShareInviteNotification || !state.shareInvites || !state.shareInvites.length) return null;
-  const invite = state.shareInvites[0];
-  const overlay = el("div", { className: "inbox-notification-overlay" },
-    el("div", { className: "inbox-notification-box" },
-      el("div", { className: "inbox-notification-header" },
-        el("div", { className: "inbox-notification-badge" }, "shared"),
-        el("button", { className: "inbox-notification-close", onClick: () => { acknowledgeShareInvite(invite); } }, "X")
-      ),
-      el("div", { className: "inbox-notification-content" },
-        el("div", { className: "inbox-notification-title" }, invite.sender + " has shared their " + invite.projectName + " with you!"),
-        el("button", { className: "inbox-notification-btn", onClick: () => { acknowledgeShareInvite(invite); } }, "okay")
-      )
-    )
-  );
-  return overlay;
-}
-
 function renderAIChatUI() {
   if (!state.showAIChat) return null;
   
@@ -876,7 +462,7 @@ function renderAIChatUI() {
       state.showFeedbackManagement = false; 
       state.currentFeedbackUser = null; 
       scheduleRender(); 
-    } }, "X")
+    } }, "×")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -957,7 +543,7 @@ function renderFeedbackManagement() {
   
   const header = el("div", { className: "ai-chat-header" },
     el("div", { className: "ai-chat-title" }, svgIcon("ai"), " PrysmisAI Feedback"),
-    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; scheduleRender(); } }, "X")
+    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; scheduleRender(); } }, "×")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -1003,7 +589,7 @@ function renderFeedbackChat(overlay, chatBox) {
   const header = el("div", { className: "ai-chat-header" },
     el("button", { className: "ai-chat-back", onClick: () => { state.currentFeedbackUser = null; scheduleRender(); } }, svgIcon("back")),
     el("div", { className: "ai-chat-title" }, svgIcon("ai"), " PrysmisAI with " + user.username),
-    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; state.currentFeedbackUser = null; scheduleRender(); } }, "X")
+    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; state.currentFeedbackUser = null; scheduleRender(); } }, "×")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -1145,309 +731,23 @@ async function sendAIMessage(content) {
   }
 }
 
-function escapeHtml(text) {
-  return String(text || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function countLinesFast(text) {
-  if (!text) return 1;
-  let n = 1;
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) n++;
-  }
-  return n;
-}
-
-function buildLineNumbers(count) {
-  if (count <= 1) return "1";
-  const parts = new Array(count);
-  for (let i = 0; i < count; i++) parts[i] = String(i + 1);
-  return parts.join("\n");
-}
-
 function highlightCode(text, type) {
-  const raw = text || "";
-  if (raw.length > EDITOR_HIGHLIGHT_MAX_CHARS || countLinesFast(raw) > EDITOR_HIGHLIGHT_MAX_LINES) {
-    return escapeHtml(raw);
-  }
-  let html = escapeHtml(raw);
+  let html = (text || "").replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const isMc = type === 'minecraft';
   const kwColor = isMc ? '#6dbd3d' : '#7289da';
   const strColor = isMc ? '#a8d5a2' : '#9ece6a';
+  
   const strings = [];
-  html = html.replace(/("[^"\n]*"|'[^'\n]*'|`[^`\n]*`)/g, function(m) {
+  html = html.replace(/("[^"]*"|'[^']*'|\`[^`]*\`)/g, (m) => {
     strings.push('<span style="color:' + strColor + '">' + m + '</span>');
     return '__STR' + (strings.length - 1) + '__';
   });
+  
   html = html.replace(/\b(import|from|const|let|var|function|async|await|return|if|elif|else|for|while|class|require|def|try|except|catch|pass|True|False|None|null|undefined|new|this)\b/g, '<span style="color:' + kwColor + ';font-weight:bold">$1</span>');
-  html = html.replace(/__STR(\d+)__/g, function(m, p1) { return strings[parseInt(p1, 10)] || m; });
+  
+  html = html.replace(/__STR(\d+)__/g, (m, p1) => strings[parseInt(p1, 10)]);
+  
   return html;
-}
-
-function fetchProjectAccess(id) {
-  fetch('/api/projects/' + id + '/access').then(r => r.json()).then(d => {
-    if (d.success) {
-      state.projectAccess = d;
-      state.settingsName = d.name || "";
-      state.settingsPrivate = !!d.private;
-      state.settingsPassword = d.isOwner ? (d.password || "") : "";
-      state.needsProjectPassword = !!d.locked;
-      scheduleRender();
-    } else if (d.removed && state.currentProject && String(state.currentProject.id) === String(id)) {
-      showKickedOverlay();
-    }
-  });
-}
-
-function showKickedOverlay() {
-  if (document.getElementById('rc-kicked-overlay')) return;
-  state.currentProject = null;
-  state.page = 'projects';
-  scheduleRender();
-  const overlay = document.createElement('div');
-  overlay.id = 'rc-kicked-overlay';
-  overlay.className = 'kicked-overlay';
-  const box = document.createElement('div');
-  box.className = 'kicked-box';
-  const title = document.createElement('div');
-  title.className = 'kicked-title';
-  title.textContent = "You've been kicked.";
-  const count = document.createElement('div');
-  count.className = 'kicked-countdown';
-  let n = 3;
-  count.textContent = 'redirecting you back to main page in ' + n + '.';
-  box.appendChild(title);
-  box.appendChild(count);
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  const timer = setInterval(() => {
-    n -= 1;
-    if (n < 0) {
-      clearInterval(timer);
-      window.location.href = '/dashboard';
-      return;
-    }
-    count.textContent = 'redirecting you back to main page in ' + n + '.';
-  }, 1000);
-}
-
-function submitShare() {
-  const p = state.currentProject;
-  if (!p) return;
-  const username = state.shareUsername.trim();
-  if (!username) { state.shareError = "Enter a username."; scheduleRender(); return; }
-  fetch('/api/projects/' + p.id + '/share', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username })
-  }).then(r => r.json()).then(d => {
-    if (!d.success) { state.shareError = d.message || "Failed to share."; scheduleRender(); return; }
-    fetch('/api/projects/' + p.id + '/share-perms', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, editFiles: state.shareEditFiles, changeName: state.shareChangeName, fullAccess: state.shareFullAccess })
-    }).then(() => {
-      if (state.sharePrivate) {
-        fetch('/api/projects/' + p.id + '/settings', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ private: true, password: state.sharePassword })
-        }).then(() => {
-          finishShare(p);
-        });
-      } else {
-        finishShare(p);
-      }
-    });
-  });
-}
-
-function finishShare(p) {
-  state.showShareModal = false;
-  state.shareUsername = ""; state.shareEditFiles = false; state.shareChangeName = false;
-  state.shareFullAccess = false; state.sharePrivate = false; state.sharePassword = ""; state.shareError = "";
-  fetchProjectAccess(p.id);
-  scheduleRender();
-}
-
-function selectSharedMember(username) {
-  state.settingsSelectedMember = username;
-  const access = state.projectAccess;
-  const entry = access && access.shared ? access.shared.find(x => x.username === username) : null;
-  state.settingsMemberEditFiles = entry ? !!entry.perms.editFiles : false;
-  state.settingsMemberChangeName = entry ? !!entry.perms.changeName : false;
-  state.settingsMemberFullAccess = entry ? !!entry.perms.fullAccess : false;
-  scheduleRender();
-}
-
-function removeSharedMember() {
-  const p = state.currentProject;
-  if (!p || !state.settingsSelectedMember) return;
-  fetch('/api/projects/' + p.id + '/unshare', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: state.settingsSelectedMember })
-  }).then(() => {
-    state.settingsSelectedMember = "";
-    fetchProjectAccess(p.id);
-  });
-}
-
-function saveSettings() {
-  const p = state.currentProject;
-  if (!p) return;
-  const access = state.projectAccess;
-  if (access && access.isOwner) {
-    fetch('/api/projects/' + p.id + '/settings', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: state.settingsName, password: state.settingsPassword, private: state.settingsPrivate })
-    }).then(() => {
-      p.name = state.settingsName;
-      if (state.settingsSelectedMember) {
-        fetch('/api/projects/' + p.id + '/share-perms', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: state.settingsSelectedMember, editFiles: state.settingsMemberEditFiles, changeName: state.settingsMemberChangeName, fullAccess: state.settingsMemberFullAccess })
-        }).then(() => {
-          state.showSettingsModal = false;
-          fetchProjectAccess(p.id);
-        });
-      } else {
-        state.showSettingsModal = false;
-        fetchProjectAccess(p.id);
-      }
-    });
-  } else {
-    fetch('/api/projects/' + p.id + '/rename-shared', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: state.settingsName })
-    }).then(r => r.json()).then(d => {
-      if (d.success) p.name = d.name;
-      state.showSettingsModal = false;
-      scheduleRender();
-    });
-  }
-}
-
-function unlockProject() {
-  const p = state.currentProject;
-  if (!p) return;
-  fetch('/api/projects/' + p.id + '/unlock', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: state.projectUnlockInput })
-  }).then(r => r.json()).then(d => {
-    if (d.success) {
-      state.needsProjectPassword = false;
-      state.projectUnlockInput = "";
-      openProject(p.id);
-    } else {
-      alert(d.message || "Incorrect password.");
-    }
-  });
-}
-
-function renderShareModal() {
-  const overlay = el("div", { className: "modal-overlay share-modal-overlay", onClick: (ev) => { if (ev.target === overlay) { state.showShareModal = false; scheduleRender(); } } });
-  const passwordField = state.sharePrivate ? el("div", { className: "share-password-fade" },
-    el("label", { className: "modal-label" }, "Enter project password"),
-    el("input", { className: "modal-input", type: "text", value: state.sharePassword, oninput: (e) => { state.sharePassword = e.target.value; } })
-  ) : null;
-  const modal = el("div", { className: "modal share-modal" },
-    el("h2", {}, "Share Project"),
-    el("label", { className: "modal-label" }, "Enter the user you want to share:"),
-    el("input", { className: "modal-input", type: "text", placeholder: "username", value: state.shareUsername, oninput: (e) => { state.shareUsername = e.target.value; } }),
-    state.shareError ? el("div", { className: "share-error" }, state.shareError) : null,
-    el("div", { className: "share-checkboxes" },
-      el("label", { className: "share-checkbox" },
-        el("input", { type: "checkbox", checked: state.shareEditFiles, onChange: (e) => { state.shareEditFiles = e.target.checked; scheduleRender(); } }),
-        " Allow the user to edit files"
-      ),
-      el("label", { className: "share-checkbox" },
-        el("input", { type: "checkbox", checked: state.shareChangeName, onChange: (e) => { state.shareChangeName = e.target.checked; scheduleRender(); } }),
-        " Allow the user to change project name"
-      ),
-      el("label", { className: "share-checkbox" },
-        el("input", { type: "checkbox", checked: state.shareFullAccess, onChange: (e) => { state.shareFullAccess = e.target.checked; scheduleRender(); } }),
-        " Allow full access to the user"
-      ),
-      el("label", { className: "share-checkbox" },
-        el("input", { type: "checkbox", checked: state.sharePrivate, onChange: (e) => { state.sharePrivate = e.target.checked; scheduleRender(); } }),
-        " Make project private"
-      )
-    ),
-    passwordField,
-    el("div", { className: "modal-actions" },
-      el("button", { className: "btn-cancel", onClick: () => { state.showShareModal = false; scheduleRender(); } }, "Cancel"),
-      el("button", { className: "btn-new", onClick: submitShare }, "Share now")
-    )
-  );
-  overlay.appendChild(modal);
-  return overlay;
-}
-
-function renderSettingsModal() {
-  const access = state.projectAccess;
-  const isOwner = access && access.isOwner;
-  const overlay = el("div", { className: "modal-overlay settings-modal-overlay", onClick: (ev) => { if (ev.target === overlay) { state.showSettingsModal = false; scheduleRender(); } } });
-  const modal = el("div", { className: "modal settings-modal" },
-    el("h2", {}, "Project Settings")
-  );
-  modal.appendChild(el("label", { className: "modal-label" }, "Project name"));
-  modal.appendChild(el("input", {
-    className: "modal-input", type: "text", value: state.settingsName,
-    disabled: !(isOwner || (access && (access.perms.changeName || access.perms.fullAccess))),
-    oninput: (e) => { state.settingsName = e.target.value; }
-  }));
-  if (isOwner) {
-    modal.appendChild(el("label", { className: "modal-label" }, "Current project password"));
-    modal.appendChild(el("input", { className: "modal-input", type: "text", placeholder: access.hasPassword || state.settingsPassword ? "" : "No password set", value: state.settingsPassword || "", oninput: (e) => { state.settingsPassword = e.target.value; } }));
-    modal.appendChild(el("label", { className: "share-checkbox", style: { marginTop: "10px" } },
-      el("input", { type: "checkbox", checked: state.settingsPrivate, onChange: (e) => { state.settingsPrivate = e.target.checked; scheduleRender(); } }),
-      " Make project private"
-    ));
-    modal.appendChild(el("label", { className: "modal-label", style: { marginTop: "16px" } }, "Current shared members"));
-    const select = el("select", { className: "modal-input", value: state.settingsSelectedMember, onChange: (e) => { selectSharedMember(e.target.value); } },
-      el("option", { value: "" }, "Select a member..."),
-      ...(access.shared || []).map(s => el("option", { value: s.username }, s.username))
-    );
-    modal.appendChild(select);
-    if (state.settingsSelectedMember) {
-      modal.appendChild(el("div", { className: "share-checkboxes" },
-        el("label", { className: "share-checkbox" },
-          el("input", { type: "checkbox", checked: state.settingsMemberEditFiles, onChange: (e) => { state.settingsMemberEditFiles = e.target.checked; } }),
-          " Allow the user to edit files"
-        ),
-        el("label", { className: "share-checkbox" },
-          el("input", { type: "checkbox", checked: state.settingsMemberChangeName, onChange: (e) => { state.settingsMemberChangeName = e.target.checked; } }),
-          " Allow the user to change project name"
-        ),
-        el("label", { className: "share-checkbox" },
-          el("input", { type: "checkbox", checked: state.settingsMemberFullAccess, onChange: (e) => { state.settingsMemberFullAccess = e.target.checked; } }),
-          " Allow full access to the user"
-        )
-      ));
-      modal.appendChild(el("button", { className: "btn-kill-sm", style: { marginTop: "8px" }, onClick: removeSharedMember }, "Remove user"));
-    }
-  } else {
-    modal.appendChild(el("div", { className: "share-error", style: { color: "var(--text-dim)" } }, "You only have permission to view and rename this project."));
-  }
-  modal.appendChild(el("div", { className: "modal-actions" },
-    el("button", { className: "btn-cancel", onClick: () => { state.showSettingsModal = false; scheduleRender(); } }, "Cancel"),
-    el("button", { className: "btn-new", onClick: saveSettings }, "Save settings")
-  ));
-  overlay.appendChild(modal);
-  return overlay;
-}
-
-function renderPasswordGate() {
-  const overlay = el("div", { className: "modal-overlay password-gate-overlay" });
-  const modal = el("div", { className: "modal" },
-    el("h2", {}, "Enter the project password:"),
-    el("input", { className: "modal-input", type: "password", value: state.projectUnlockInput, oninput: (e) => { state.projectUnlockInput = e.target.value; } }),
-    el("div", { className: "modal-actions" },
-      el("button", { className: "btn-new", onClick: unlockProject }, "Unlock")
-    )
-  );
-  overlay.appendChild(modal);
-  return overlay;
 }
 
 function saveProjects() {
@@ -1472,17 +772,9 @@ function saveCurrentFile() {
   if (!state.currentProject || !state.editorFile) return;
   state.currentProject.files = state.currentProject.files || {};
   state.currentProject.files[state.editorFile] = state.codeContent;
-  state.originalCodeContent = state.codeContent;
-  const access = state.projectAccess;
-  if (access && !access.isOwner) {
-    fetch('/api/projects/' + state.currentProject.id + '/savefile', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: state.editorFile, content: state.codeContent })
-    });
-    return;
-  }
   const proj = state.projects.find(x => x.id === state.currentProject.id);
   if (proj) proj.files = state.currentProject.files;
+  state.originalCodeContent = state.codeContent;
   saveProjects();
 }
 
@@ -1490,7 +782,7 @@ function switchFile(filename) {
   saveCurrentFile();
   state.editorFile = filename;
   state.codeContent = "";
-  if (state.currentProject.files && state.currentProject.files[filename] !== undefined && state.currentProject.files[filename] !== null) {
+  if (state.currentProject.files && state.currentProject.files[filename] !== undefined) {
     state.codeContent = state.currentProject.files[filename];
     state.originalCodeContent = state.codeContent;
   } else {
@@ -1594,28 +886,12 @@ function render() {
   const existing = document.getElementById("search-modal-overlay");
   if (existing) existing.remove();
   document.querySelectorAll('.ai-chat-overlay').forEach(el => el.remove());
-  document.querySelectorAll('.share-modal-overlay, .settings-modal-overlay, .password-gate-overlay').forEach(el => el.remove());
-  document.querySelectorAll('.inbox-notification-overlay').forEach(el => el.remove());
   if (state.showSearchModal) {
     document.body.appendChild(renderSearchModal());
   }
   document.body.appendChild(renderAIChatButton());
-  if (state.page === "bot-dashboard" || state.page === "mc-dashboard") {
-    if (state.needsProjectPassword) {
-      document.body.appendChild(renderPasswordGate());
-    } else {
-      if (state.showShareModal) document.body.appendChild(renderShareModal());
-      if (state.showSettingsModal) document.body.appendChild(renderSettingsModal());
-    }
-  }
   if (state.showAIChat) {
     document.body.appendChild(renderAIChatUI());
-  }
-  if (state.showInboxNotification) {
-    document.body.appendChild(renderInboxNotification());
-  }
-  if (state.showShareInviteNotification) {
-    document.body.appendChild(renderShareInviteNotification());
   }
   scrollConsolesToBottom();
 }
@@ -1663,7 +939,7 @@ function renderProjectsPage() {
         el("p", {}, "Manage your Discord bots and Minecraft servers"),
         el("div", { style: { fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" } }, state.projects.length + " projects • " + (state.projects.filter(function(x){ return x.running; }).length) + " running")
       ),
-      el("div", { className: "projects-header-actions", style: { display: "flex", gap: "10px", alignItems: "center" } },
+      el("div", { style: { display: "flex", gap: "10px", alignItems: "center" } },
         el("input", { className: "search-input", placeholder: "Search project or press ctrl+k", value: state.searchTerm, oninput: function(e){ 
           state.searchTerm = e.target.value; 
           if (searchTimeout) clearTimeout(searchTimeout);
@@ -1673,7 +949,6 @@ function renderProjectsPage() {
         }, onfocus: function(){ state.showSearchModal = true; scheduleRender(); } }),
         el("button", { className: "btn-changelogs", onClick: function(){ history.pushState(null, "", "/dashboard/changelogs"); state.page = "changelogs"; state.viewChangelogSlug = null; fetchChangelogs(); scheduleRender(); } }, "Changelogs"),
         el("button", { className: "btn-changelogs", onClick: () => { history.pushState(null, "", "/ourapi"); state.page = "ourapi"; scheduleRender(); } }, "Our API"),
-        el("button", { className: "btn-changelogs", onClick: () => { window.location.href = "/inbox"; } }, "Inbox"),
         el("button", { className: "btn-new", onClick: () => { state.showNewModal = true; scheduleRender(); } }, 
           svgIcon("plus"), " New Project"
         )
@@ -1681,7 +956,7 @@ function renderProjectsPage() {
     )
   );
 
-  if (state.projects.length === 0 && state.sharedProjects.length === 0) {
+  if (state.projects.length === 0) {
     page.appendChild(el("div", { className: "empty-state" },
       el("div", { className: "empty-icon" }, svgIcon("folder")),
       el("div", { className: "empty-title" }, "No projects yet"),
@@ -1691,22 +966,11 @@ function renderProjectsPage() {
       )
     ));
   } else {
+    const grid = el("div", { className: "projects-grid" });
     const term = (state.searchTerm || "").toLowerCase().trim();
-    if (state.projects.length > 0) {
-      const grid = el("div", { className: "projects-grid" });
-      const filtered = term ? state.projects.filter(function(p){ return (p.name || "").toLowerCase().indexOf(term) !== -1 || (p.lang || "").toLowerCase().indexOf(term) !== -1 || (p.serverType || "").toLowerCase().indexOf(term) !== -1; }) : state.projects;
-      filtered.forEach(p => grid.appendChild(renderProjectCard(p)));
-      page.appendChild(grid);
-    }
-    if (state.sharedProjects.length > 0) {
-      const filteredShared = term ? state.sharedProjects.filter(function(p){ return (p.name || "").toLowerCase().indexOf(term) !== -1 || (p.lang || "").toLowerCase().indexOf(term) !== -1 || (p.owner || "").toLowerCase().indexOf(term) !== -1; }) : state.sharedProjects;
-      if (filteredShared.length > 0) {
-        page.appendChild(el("div", { className: "shared-section-title" }, "Shared with you"));
-        const sharedGrid = el("div", { className: "projects-grid" });
-        filteredShared.forEach(p => sharedGrid.appendChild(renderSharedProjectCard(p)));
-        page.appendChild(sharedGrid);
-      }
-    }
+    const filtered = term ? state.projects.filter(function(p){ return (p.name || "").toLowerCase().indexOf(term) !== -1 || (p.lang || "").toLowerCase().indexOf(term) !== -1 || (p.serverType || "").toLowerCase().indexOf(term) !== -1; }) : state.projects;
+    filtered.forEach(p => grid.appendChild(renderProjectCard(p)));
+    page.appendChild(grid);
   }
   
   frag.appendChild(page);
@@ -1736,26 +1000,6 @@ function renderProjectCard(p) {
   }
   actions.appendChild(el("button", { className: "btn-delete", onClick: () => deleteProject(p.id) }, "Delete"));
 
-  return el("div", { className: "project-card" + (isMc ? " mc" : " discord") },
-    el("div", { className: "card-top" },
-      el("div", { className: "card-icon " + (isMc ? "mc" : "discord") }, svgIcon(isMc ? "pickaxe" : "discord"))
-    ),
-    el("div", { className: "card-name" }, p.name),
-    tags,
-    actions
-  );
-}
-
-function renderSharedProjectCard(p) {
-  const isMc = p.type === "minecraft";
-  const tags = el("div", { className: "card-tags" },
-    el("span", { className: "tag" }, isMc ? (p.serverType || "Minecraft") : (p.lang || "")),
-    el("span", { className: "tag " + (p.running ? "running" : "stopped") }, p.running ? "Running" : "Stopped"),
-    el("span", { className: "tag shared-tag" }, "Shared with " + p.owner)
-  );
-  const actions = el("div", { className: "card-actions" },
-    el("button", { className: "btn-manage", onClick: () => openProject(p.id) }, p.locked ? "Unlock" : "Manage")
-  );
   return el("div", { className: "project-card" + (isMc ? " mc" : " discord") },
     el("div", { className: "card-top" },
       el("div", { className: "card-icon " + (isMc ? "mc" : "discord") }, svgIcon(isMc ? "pickaxe" : "discord"))
@@ -1802,9 +1046,9 @@ function renderModal() {
     sel.onchange = () => { state.newMcVersion = sel.value; };
     modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Minecraft Version"), sel));
 
-    const ipInput = el("input", { className: "form-input", placeholder: "e.g. play.myserver.net", value: state.newMcIp });
-    ipInput.oninput = () => { state.newMcIp = ipInput.value; };
-    modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Server IP / Domain"), ipInput, el("div", { style: { fontSize:"11px", color:"var(--text-muted)", marginTop:"5px" } }, "Players will connect with this address.")));
+    const ipInput = el("input", { className: "form-input", placeholder: "e.g. play.myserver.net or any custom domain", value: state.newMcIp });
+    ipInput.oninput = () => { state.newMcIp = ipInput.value; state.newMcDomain = ipInput.value; };
+    modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Server IP / Custom Domain"), ipInput, el("div", { style: { fontSize:"11px", color:"var(--text-muted)", marginTop:"5px" } }, "Any custom domain works. Point its A/CNAME DNS to this host, then players connect with that domain (port 25565 via proxy, or your assigned port).")));
   } else {
     const lgrid = el("div", { className: "lang-grid" });
     BOT_LANGS.forEach(lang => {
@@ -1841,6 +1085,7 @@ function getDefaultCode(p) {
 
 function createProject() {
   if (!state.newName.trim()) return;
+  const domain = (state.newMcIp || state.newMcDomain || (state.newName.toLowerCase().replace(/\s+/g, "-") + ".rebootcord.io")).trim();
   const p = {
     id: Date.now(),
     name: state.newName.trim(),
@@ -1848,7 +1093,9 @@ function createProject() {
     lang: state.newLang,
     version: state.newMcVersion,
     serverType: state.newMcServerType,
-    ip: state.newMcIp || (state.newName.toLowerCase().replace(/\s+/g, "-") + ".rebootcord.io"),
+    ip: domain,
+    customDomain: domain,
+    domain: domain,
     running: false,
     files: {},
     serverAbout: "",
@@ -1862,7 +1109,11 @@ function createProject() {
     p.files[fname] = getDefaultCode(p);
   }
   if (p.type === "minecraft" && !p.port) {
-    p.port = 25565 + (state.projects ? state.projects.length : 0);
+    const used = new Set((state.projects || []).filter(function(x){ return x.type === "minecraft" && x.port; }).map(function(x){ return Number(x.port); }));
+    used.add(25565);
+    let port = 25566;
+    while (used.has(port)) port++;
+    p.port = port;
   }
   state.projects.push(p);
   state.currentProject = p;
@@ -1883,10 +1134,8 @@ function createProject() {
 }
 
 function openProject(id) {
-  let p = state.projects.find(p => p.id === id);
-  if (!p) p = state.sharedProjects.find(p => String(p.id) === String(id));
+  const p = state.projects.find(p => p.id === id);
   if (!p) return;
-  p.files = p.files || {};
   const slug = p.name.toLowerCase().replace(/\s+/g, '-');
   history.pushState(null, '', '/dashboard/' + slug);
   state.currentProject = p;
@@ -1898,8 +1147,6 @@ function openProject(id) {
   state.botLogs = []; state.mcLogs = []; state.missingPackages = [];
   state.expandedFolders = [];
   state.currentFileTree = [];
-  state.projectAccess = null;
-  fetchProjectAccess(id);
   fetch('/api/projects/' + id + '/dir').then(r => r.json()).then(d => {
     if (d.success) {
       if (p.type === "minecraft") {
@@ -1910,14 +1157,14 @@ function openProject(id) {
         flat.forEach(function(f) {
           if (!f.isDir) {
             const key = f.rel || f.name;
-            if (p.files[key] === undefined) p.files[key] = null;
+            if (p.files[key] === undefined) p.files[key] = "";
           }
         });
       }
     }
     if (p.type === "discord") {
       state.editorFile = getDefaultFilename(p);
-      if (p.files[state.editorFile] !== undefined && p.files[state.editorFile] !== null) {
+      if (p.files[state.editorFile] !== undefined) {
         state.codeContent = p.files[state.editorFile];
         state.originalCodeContent = state.codeContent;
         render();
@@ -1941,78 +1188,47 @@ function openProject(id) {
 
 function deleteProject(id) {
   if (!confirm("Delete this project?")) return;
-  const p = state.projects.find(x => String(x.id) === String(id));
-  withActionLock(id, function() {
-    setProjectRunning(id, false);
-    if (state.currentProject && String(state.currentProject.id) === String(id)) {
-      state.currentProject = null;
-      state.page = "projects";
-    }
-    scheduleRender();
-    return fetch("/api/projects/" + id + "/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" }
-    }).then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
-      .then(function(data){
-        if (data && data.success) {
-          state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
-          scheduleRender();
-          return data;
-        }
-        return fetch("/api/projects/" + id + "/kill", { method: "POST" })
-          .then(function(){
-            state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
-            saveProjects();
-            scheduleRender();
-            return { success: true };
-          });
-      })
-      .catch(function(){
-        state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
-        saveProjects();
-        scheduleRender();
-        return { success: false };
-      });
-  });
+  const p = state.projects.find(x => x.id === id);
+  if (p && p.running) { fetch("/api/projects/" + id + "/kill", { method: "POST" }); }
+  state.projects = state.projects.filter(function(x){ return x.id !== id; });
+  if (state.currentProject && state.currentProject.id === id) { state.currentProject = null; state.page = "projects"; }
+  saveProjects();
+  scheduleRender();
 }
 
 function toggleRunning(p) {
   if (!p) return;
-  withActionLock(p.id, function() {
-    const wasRunning = !!p.running;
-    const nextRunning = !wasRunning;
-    setProjectRunning(p.id, nextRunning);
-    scheduleRender();
+  const wasRunning = !!p.running;
+  const nextRunning = !wasRunning;
+  applyProjectRunning(p.id, nextRunning);
+  scheduleRender();
 
-    if (nextRunning) {
-      return fetch("/api/projects/" + p.id + "/start", { method: "POST" })
-        .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
-        .then(function(data){
-          setProjectRunning(p.id, !!(data && data.success));
-          scheduleRender();
-          return data;
-        })
-        .catch(function(){
-          setProjectRunning(p.id, false);
-          scheduleRender();
-          return { success: false };
-        });
-    }
-
-    return fetch("/api/projects/" + p.id + "/stop", { method: "POST" })
-      .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
-      .then(function(data){
-        if (data && data.success) setProjectRunning(p.id, false);
-        else setProjectRunning(p.id, true);
+  const url = (API_BASE || "") + "/api/projects/" + p.id + (nextRunning ? "/start" : "/stop");
+  fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin" })
+    .then(safeJson)
+    .then(function(data) {
+      if (!data || !data.success) {
+        applyProjectRunning(p.id, wasRunning);
+        const tgt = p.type === "minecraft" ? state.mcLogs : state.botLogs;
+        tgt.push({ t: getTime(), type: "err", msg: "[System] " + ((data && data.message) || "Failed to " + (nextRunning ? "start" : "stop") + " host") });
+        trimLogs(tgt);
         scheduleRender();
-        return data;
-      })
-      .catch(function(){
-        setProjectRunning(p.id, true);
+        return;
+      }
+      if (nextRunning) {
+        const tgt = p.type === "minecraft" ? state.mcLogs : state.botLogs;
+        tgt.push({ t: getTime(), type: "sys", msg: "[System] Start request accepted. Preparing host..." });
+        trimLogs(tgt);
         scheduleRender();
-        return { success: false };
-      });
-  });
+      }
+    })
+    .catch(function(err) {
+      applyProjectRunning(p.id, wasRunning);
+      const tgt = p.type === "minecraft" ? state.mcLogs : state.botLogs;
+      tgt.push({ t: getTime(), type: "err", msg: "[System] Host request failed: " + (err && err.message ? err.message : "network error") });
+      trimLogs(tgt);
+      scheduleRender();
+    });
 }
 
 function flashSaveBtn(btn) {
@@ -2029,45 +1245,84 @@ function flashSaveBtn(btn) {
   }, 1400);
 }
 
+function ensureWsReady() {
+  return !!(ws && ws.readyState === 1);
+}
+
 function installPkg() {
   const input = document.getElementById("pkgInput");
   const v = input ? input.value.trim() : "";
-  if (!v || !ws || !state.currentProject || state.installingPkg) return;
+  if (!v || !state.currentProject || state.installingPkg) return;
+  if (!ensureWsReady()) {
+    connectWS();
+    state.botLogs.push({ t: getTime(), type: "err", msg: "[PKG] Console host reconnecting. Try install again in a moment." });
+    scheduleRender();
+    return;
+  }
   state.installingPkg = true;
   ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: v }));
   if (input) input.value = "";
   scheduleRender();
+  setTimeout(function() {
+    if (state.installingPkg) {
+      state.installingPkg = false;
+      scheduleRender();
+    }
+  }, 10 * 60 * 1000);
 }
 
-function installAllPkgs(force) {
-  if (!ws || !state.currentProject || state.installingAll) return;
+function installAllPkgs() {
+  if (!state.currentProject || state.installingAll) return;
+  if (!ensureWsReady()) {
+    connectWS();
+    state.botLogs.push({ t: getTime(), type: "err", msg: "[PKG] Console host reconnecting. Try Install All again in a moment." });
+    scheduleRender();
+    return;
+  }
   const p = state.currentProject;
   state.installingAll = true;
   state.lastInstallResult = null;
   scheduleRender();
-  const localCode = Object.values((p.files && typeof p.files === "object") ? p.files : {}).join("\n");
+  const localCode = Object.values((p.files && typeof p.files === "object") ? p.files : {}).join("\n") + "\n" + (state.codeContent || "");
   const localPkgs = detectDependencies(localCode, p.lang || "Python");
-  const sendInstall = (merged) => {
-    ws.send(JSON.stringify({ event: 'installAll', projectId: p.id, pkgs: merged, force: !!force }));
-    state.missingPackages = [];
-  };
-  if (!force) {
-    fetch("/api/projects/" + p.id + "/deps-status").then(r => r.json()).then(d => {
-      if (d && d.success && d.upToDate && !(state.missingPackages || []).length) {
-        state.installingAll = false;
-        state.lastInstallResult = { success: true, count: (d.packages || []).length, upToDate: true };
-        scheduleRender();
-        return;
-      }
-      const merged = Array.from(new Set([...(d && d.packages ? d.packages : []), ...localPkgs, ...(state.missingPackages || [])]));
-      sendInstall(merged);
-    }).catch(() => sendInstall(Array.from(new Set([...localPkgs, ...(state.missingPackages || [])]))));
-  } else {
-    fetch("/api/projects/" + p.id + "/detect-deps").then(r => r.json()).then(d => {
-      const serverPkgs = (d && d.success) ? (d.packages || []) : [];
-      sendInstall(Array.from(new Set([...serverPkgs, ...localPkgs, ...(state.missingPackages || [])])));
-    }).catch(() => sendInstall(Array.from(new Set([...localPkgs, ...(state.missingPackages || [])]))));
-  }
+  fetch((API_BASE || "") + "/api/projects/" + p.id + "/detect-deps", { credentials: "same-origin" }).then(safeJson).then(d => {
+    const serverPkgs = (d && d.success) ? (d.packages || []) : [];
+    const merged = Array.from(new Set([...serverPkgs, ...localPkgs, ...(state.missingPackages || [])].filter(Boolean)));
+    if (!ensureWsReady()) {
+      state.installingAll = false;
+      state.botLogs.push({ t: getTime(), type: "err", msg: "[PKG] Host offline during install. Reconnecting..." });
+      connectWS();
+      scheduleRender();
+      return;
+    }
+    try {
+      ws.send(JSON.stringify({ event: 'installAll', projectId: p.id, pkgs: merged }));
+    } catch (e) {
+      state.installingAll = false;
+      state.botLogs.push({ t: getTime(), type: "err", msg: "[PKG] Failed to send install command: " + (e.message || e) });
+      scheduleRender();
+    }
+  }).catch((e) => {
+    if (!ensureWsReady()) {
+      state.installingAll = false;
+      scheduleRender();
+      return;
+    }
+    try {
+      ws.send(JSON.stringify({ event: 'installAll', projectId: p.id, pkgs: Array.from(new Set([...localPkgs, ...(state.missingPackages || [])].filter(Boolean))) }));
+    } catch (err) {
+      state.installingAll = false;
+      state.botLogs.push({ t: getTime(), type: "err", msg: "[PKG] Failed to send install command: " + (err.message || err) });
+      scheduleRender();
+    }
+  });
+  setTimeout(function() {
+    if (state.installingAll) {
+      state.installingAll = false;
+      state.botLogs.push({ t: getTime(), type: "warn", msg: "[PKG] Install is still running in the background. Check console output." });
+      scheduleRender();
+    }
+  }, 16 * 60 * 1000);
 }
 
 function fetchChangelogs() {
@@ -2118,9 +1373,7 @@ function renderBotDashboard() {
         svgIcon(p.running ? "stop" : "play"), p.running ? " Stop" : " Start"
       ),
       el("button", { className: "btn-kill-discord", onClick: () => { if (confirm("Force kill the bot?")) killProject(p); } }, "Kill"),
-      el("button", { className: "btn-restart-discord", onClick: () => restartProject(p) }, "Restart"),
-      el("button", { className: "btn-restart-discord", onClick: () => { state.showShareModal = true; scheduleRender(); } }, "Share"),
-      el("button", { className: "btn-restart-discord", onClick: () => { state.showSettingsModal = true; scheduleRender(); } }, svgIcon("gear"), " Settings")
+      el("button", { className: "btn-restart-discord", onClick: () => restartProject(p) }, "Restart")
     )
   ));
 
@@ -2134,7 +1387,7 @@ function renderBotDashboard() {
           if (d.success) {
             state.currentFileTree = d.files || [];
             const flat = collectFiles(d.files || []);
-            flat.forEach(function(f){ if (!f.isDir) { const k = f.rel || f.name; if (p.files[k] === undefined) p.files[k] = null; } });
+            flat.forEach(function(f){ if (!f.isDir) { const k = f.rel || f.name; if (p.files[k] === undefined) p.files[k] = ""; } });
             scheduleRender();
           }
         });
@@ -2192,17 +1445,12 @@ function renderBotDashboard() {
   const hasMissing = state.missingPackages && state.missingPackages.length > 0;
   const label = state.installingAll ? "Installing..." : (hasMissing ? "Install All Detected" : "Install All Dependencies");
   const installAllSection = el("div", { style: { marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" } },
-    el("button", { className: "btn-install discord-btn btn-install-all" + (state.installingAll ? " installing" : ""), disabled: state.installingAll, style: { background: "var(--green)", color: "#000" }, onClick: () => installAllPkgs(false) },
+    el("button", { className: "btn-install discord-btn btn-install-all" + (state.installingAll ? " installing" : ""), disabled: state.installingAll, style: { background: "var(--green)", color: "#000" }, onClick: installAllPkgs },
       state.installingAll ? el("span", { className: "install-spinner" }) : svgIcon("download"), " " + label
     ),
     state.lastInstallResult ? el("div", { className: "install-result " + (state.lastInstallResult.success ? "ok" : "err") },
-      state.lastInstallResult.success
-        ? (state.lastInstallResult.upToDate
-            ? "Dependencies already up to date (" + (state.lastInstallResult.count || 0) + ")"
-            : ("Installed " + (state.lastInstallResult.count || 0) + " package" + (state.lastInstallResult.count === 1 ? "" : "s")))
-        : "Install failed, check console"
-    ) : null,
-    state.lastInstallResult && state.lastInstallResult.upToDate ? el("button", { className: "btn-clear", style: { alignSelf: "flex-start" }, onClick: () => installAllPkgs(true) }, "Force reinstall") : null
+      state.lastInstallResult.success ? ("Installed " + (state.lastInstallResult.count || 0) + " package" + (state.lastInstallResult.count === 1 ? "" : "s")) : "Install failed, check console"
+    ) : null
   );
 
   const tInput = el("input", { className: "settings-input discord-input", type: "password", id: "tokenInput", placeholder: "Paste your bot token", value: p.botToken || "", 'aria-label': 'Bot token' });
@@ -2245,35 +1493,21 @@ function renderBotDashboard() {
 
   const ta = el("textarea", { className: "code-editor", spellcheck: "false", wrap: "off" });
   ta.value = state.codeContent || "";
-  ta.setAttribute("autocomplete", "off");
-  ta.setAttribute("autocorrect", "off");
-  ta.setAttribute("autocapitalize", "off");
   
   const hl = el("div", { className: "highlight-layer" });
   
   const lineNums = el("div", { className: "line-numbers" });
   
   let editTimeout;
-  let lastLineCount = -1;
-  let highlightRaf = 0;
-  const updateEditor = (force) => {
-    const text = state.codeContent || "";
-    const count = countLinesFast(text);
-    if (force || count !== lastLineCount) {
-      lineNums.innerText = buildLineNumbers(count);
-      lastLineCount = count;
-    }
-    const large = text.length > EDITOR_HIGHLIGHT_MAX_CHARS || count > EDITOR_HIGHLIGHT_MAX_LINES;
-    if (large) {
-      hl.textContent = text;
-      hl.classList.add("plain");
-    } else {
-      hl.classList.remove("plain");
-      hl.innerHTML = highlightCode(text, p.type);
-    }
+  const updateEditor = () => {
+    const count = (state.codeContent.match(/\n/g) || []).length + 1;
+    const arr = [];
+    for(let i=1; i<=count; i++) arr.push(i);
+    lineNums.innerText = arr.join('\n');
+    hl.innerHTML = highlightCode(state.codeContent, p.type);
   };
   
-  updateEditor(true);
+  updateEditor();
 
   ta.onscroll = () => { 
     lineNums.scrollTop = ta.scrollTop; 
@@ -2282,17 +1516,9 @@ function renderBotDashboard() {
   };
   
   ta.oninput = () => { 
-    state.codeContent = ta.value;
+    state.codeContent = ta.value; 
     clearTimeout(editTimeout);
-    const len = (state.codeContent || "").length;
-    const delay = len > 80000 ? 320 : (len > 25000 ? 160 : 70);
-    editTimeout = setTimeout(function() {
-      if (highlightRaf) cancelAnimationFrame(highlightRaf);
-      highlightRaf = requestAnimationFrame(function() {
-        highlightRaf = 0;
-        updateEditor(false);
-      });
-    }, delay);
+    editTimeout = setTimeout(updateEditor, 50);
   };
 
   const editorWrapper = el("div", { className: "editor-wrapper" }, lineNums, el("div", { className: "code-container" }, hl, ta));
@@ -2332,39 +1558,38 @@ function renderBotDashboard() {
 }
 
 function buildConsole() {
+  const p = state.currentProject || { running: false };
   const body = el("div", { className: "console-body" });
   if (state.botLogs.length === 0) {
-    body.appendChild(el("div", { "data-console-empty": "1", style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
-  } else {
-    const frag = document.createDocumentFragment();
-    const start = Math.max(0, state.botLogs.length - MAX_LOGS);
-    for (let i = start; i < state.botLogs.length; i++) {
-      const l = state.botLogs[i];
-      frag.appendChild(el("div", { className: "log-line" },
-        el("span", { className: "log-time" }, l.t),
-        el("span", { className: "log-" + l.type }, l.msg)
-      ));
-    }
-    body.appendChild(frag);
+    body.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
   }
+  state.botLogs.forEach(l => {
+    body.appendChild(el("div", { className: "log-line" },
+      el("span", { className: "log-time" }, l.t),
+      el("span", { className: "log-" + l.type }, l.msg)
+    ));
+  });
+
+  const stopFromConsole = el("button", {
+    className: p.running ? "btn-stop-discord" : "btn-start-discord",
+    style: { marginLeft: "8px" },
+    onClick: function() { if (state.currentProject) toggleRunning(state.currentProject); }
+  }, p.running ? "Stop Bot" : "Start Bot");
 
   return el("div", { className: "console-panel discord-console" },
     el("div", { className: "console-toolbar discord-console-toolbar" },
       el("span", { className: "console-label" }, "Console"),
       el("div", { className: "console-controls" },
-        el("button", { className: "btn-clear", onClick: () => {
-          state.botLogs = [];
-          const b = document.querySelector(".console-body");
-          if (b) {
-            b.innerHTML = "";
-            b.appendChild(el("div", { "data-console-empty": "1", style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
-          } else {
-            render();
-          }
-        } }, "Clear")
+        stopFromConsole,
+        el("button", { className: "btn-kill-discord", onClick: function(){ if (state.currentProject && confirm("Force kill the bot?")) killProject(state.currentProject); } }, "Kill"),
+        el("button", { className: "btn-clear", onClick: () => { state.botLogs = []; render(); } }, "Clear")
       )
     ),
-    body
+    body,
+    el("div", { style: { fontSize: "11px", color: "var(--text-muted)", padding: "8px 12px" } },
+      ensureWsReady() ? "Host link online" : "Host link reconnecting...",
+      state.lastInstallResult ? (" · Last install: " + (state.lastInstallResult.success ? "ok" : "failed") + (state.lastInstallResult.count != null ? " (" + state.lastInstallResult.count + ")" : "")) : ""
+    )
   );
 }
 
@@ -2411,17 +1636,33 @@ function collectDroppedFiles(dataTransfer) {
 
 function uploadOneFile(p, entry, onProgress) {
   return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/projects/" + p.id + "/upload");
-    xhr.upload.onprogress = (ev) => {
-      if (ev.lengthComputable) onProgress(ev.loaded / ev.total);
-    };
-    xhr.onload = () => { onProgress(1); resolve(true); };
-    xhr.onerror = () => resolve(false);
-    const fd = new FormData();
-    fd.append("relPath", entry.rel);
-    fd.append("file", entry.file);
-    xhr.send(fd);
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/projects/" + p.id + "/upload");
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) onProgress(ev.loaded / ev.total);
+      };
+      xhr.onload = () => { 
+        onProgress(1); 
+        try {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(true);
+          } else {
+            resolve(false);
+          }
+        } catch (e) {
+          resolve(false);
+        }
+      };
+      xhr.onerror = () => resolve(false);
+      xhr.ontimeout = () => resolve(false);
+      const fd = new FormData();
+      fd.append("relPath", entry.rel);
+      fd.append("file", entry.file);
+      xhr.send(fd);
+    } catch (e) {
+      resolve(false);
+    }
   });
 }
 
@@ -2601,7 +1842,7 @@ function buildMcOverview(container, p) {
   [
     { label: "Status",  html: '<span style="font-size:16px;color:var(--green);font-weight:800">' + (p.running ? "Online" : "Offline") + '</span>', sub: p.running ? "Active" : "Server stopped" },
     { label: "Players", html: '0<span style="font-size:14px;color:var(--text-muted)">/20</span>', sub: "Online now" },
-    { label: "Version", html: '<span style="font-size:16px">' + (p.version || "1.21.5") + '</span>', sub: (p.serverType || "Vanilla") + " Edition" },
+    { label: "Version", html: '<span style="font-size:16px">' + (p.version || "26.2") + '</span>', sub: (p.serverType || "Vanilla") + " Edition" },
     { label: "Port",    html: '<span style="font-size:16px">' + (p.port || "25565") + '</span>', sub: "Server Port" },
   ].forEach(s => {
     const val = el("div", { className: "mc-stat-value" });
@@ -2609,18 +1850,48 @@ function buildMcOverview(container, p) {
     grid.appendChild(el("div", { className: "mc-stat" }, el("div", { className: "mc-stat-label" }, s.label), val, el("div", { className: "mc-stat-sub" }, s.sub)));
   });
 
-  const combinedIp = (p.ip || "play.myserver.net") + (p.port ? ":" + p.port : "");
+  const host = p.customDomain || p.ip || "play.myserver.net";
+  const combinedIp = host + (p.port ? ":" + p.port : "");
+  const proxyIp = host + (String(p.port) === "25565" ? "" : " (or " + host + " via proxy :25565)");
   const copyBtn = el("button", { 
     style: { background:"#1c381c", color:"var(--mc-bright)", border:"1px solid #2a5a2a", padding:"6px 13px", borderRadius:"7px", fontSize:"12px", fontWeight:"700", cursor:"pointer", display:"flex", alignItems:"center", gap:"6px", fontFamily:"var(--font)" },
     onClick: () => { if (navigator.clipboard) navigator.clipboard.writeText(combinedIp); copyBtn.lastChild.textContent = "Copied!"; setTimeout(() => { copyBtn.lastChild.textContent = "Copy IP"; }, 1400); }
   }, svgIcon("copy"), "Copy IP");
 
   container.appendChild(grid);
-  container.appendChild(el("div", { className: "mc-section-title" }, "Server IP"));
-  container.appendChild(el("div", { style: { background:"#090f09", border:"1px solid #162016", borderRadius:"8px", padding:"14px", marginBottom:"20px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:"8px" } },
+  container.appendChild(el("div", { className: "mc-section-title" }, "Server IP / Custom Domain"));
+  container.appendChild(el("div", { style: { background:"#090f09", border:"1px solid #162016", borderRadius:"8px", padding:"14px", marginBottom:"12px", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:"8px" } },
     el("span", { style: { fontFamily:"var(--mono)", color:"var(--mc-bright)", fontSize:"15px", fontWeight:"600" } }, combinedIp),
     copyBtn
   ));
+
+  const domainInput = el("input", { className: "form-input", value: host, placeholder: "custom.domain.com", style: { flex: "1", minWidth: "180px" } });
+  const saveDomainBtn = el("button", {
+    className: "btn-upload-mod",
+    onClick: function() {
+      const domain = (domainInput.value || "").trim();
+      fetch((API_BASE || "") + "/api/projects/" + p.id + "/domain", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ domain: domain })
+      }).then(safeJson).then(function(d) {
+        if (d && d.success) {
+          p.customDomain = domain;
+          p.domain = domain;
+          p.ip = domain;
+          const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
+          if (proj) { proj.customDomain = domain; proj.domain = domain; proj.ip = domain; }
+          saveProjects();
+          scheduleRender();
+        } else {
+          alert((d && d.message) || "Failed to save domain");
+        }
+      }).catch(function(){ alert("Failed to save domain"); });
+    }
+  }, "Save Domain");
+  container.appendChild(el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" } }, domainInput, saveDomainBtn));
+  container.appendChild(el("div", { style: { fontSize: "11px", color: "var(--text-muted)", marginBottom: "20px" } }, "Point this domain's DNS A/CNAME to the RebootCord host. Connect with domain only (port 25565 proxy) or direct " + combinedIp + "."));
 }
 
 function buildMcFiles(container, p) {
@@ -2731,11 +2002,22 @@ function buildMcConsole(p) {
 
 function sendMcCmd(cmd) {
   let safeCmd = (cmd || "").trim();
-  if (!safeCmd || !ws || !state.currentProject) return;
+  if (!safeCmd || !state.currentProject) return;
   if (safeCmd.startsWith("/")) safeCmd = safeCmd.slice(1).trim();
-  ws.send(JSON.stringify({ event: 'cmd', projectId: state.currentProject.id, cmd: safeCmd }));
+  if (ensureWsReady()) {
+    ws.send(JSON.stringify({ event: 'cmd', projectId: state.currentProject.id, cmd: safeCmd }));
+  } else {
+    fetch((API_BASE || "") + "/api/projects/" + state.currentProject.id + "/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ cmd: safeCmd })
+    }).then(safeJson).catch(function(){});
+  }
+  state.mcLogs.push({ t: getTime(), type: "sys", msg: "> " + safeCmd });
+  trimLogs(state.mcLogs);
   state.mcCmd = "";
-  render();
+  scheduleRender();
 }
 
 function buildMcBackups(container, p) {
@@ -2934,7 +2216,6 @@ function renderOurApi() {
     { id: "hosting-magic", label: "Hosting Magic", icon: "magic" },
     { id: "api-endpoints", label: "API Endpoints", icon: "endpoint" },
     { id: "sdks-autostyling", label: "SDK AutoStyling", icon: "style" },
-    { id: "device-detection", label: "Device Detection", icon: "shield" },
     { id: "javascript", label: "Javascript", icon: "code" },
     { id: "ai-integration", label: "AI Integration", icon: "ai" }
   ];
@@ -3040,8 +2321,7 @@ function renderOurApi() {
         { method: "POST", path: "/api/v1/deploy", desc: "Hook your site project so it sends calls to the API provided. You can just sit back and watch the host magic happen in real time. Use your rc_live_ key in the request for auth.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }, { name: "projectId", type: "body", desc: "Your project ID" }] },
         { method: "POST", path: "/api/v1/apikeys", desc: "Create a new API key for your apps. Full key returned once only — use masked rc_****** in lists. Copy button gives full key for recent even when hidden.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }] },
         { method: "GET", path: "/api/v1/apikeys", desc: "List your API keys. Returns masked versions for security. Use the copy button on the dashboard to get the full key.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }] },
-        { method: "POST", path: "/api/v1/feedback", desc: "Submit user feedback or suggestion from your site or tools. Requires rc_live_ key. Rate limited.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }, { name: "message", type: "body", desc: "The feedback text" }] },
-        { method: "GET", path: "/api/v1/device", desc: "Detect a visitor's device type, OS, and browser from the request. Powers the RebootDevice SDK, or call it directly for server-side rendering decisions.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }] }
+        { method: "POST", path: "/api/v1/feedback", desc: "Submit user feedback or suggestion from your site or tools. Requires rc_live_ key. Rate limited.", params: [{ name: "Authorization", type: "header", desc: "rc_live_xxx" }, { name: "message", type: "body", desc: "The feedback text" }] }
       ];
       endpoints.forEach(function(ep) {
         const card = el("div", { className: "api-endpoint-card" },
@@ -3105,60 +2385,6 @@ function renderOurApi() {
       });
       d.appendChild(el("div", { className: "api-sub-heading", style: { marginTop: "20px" } }, "What you get"));
       d.appendChild(feats);
-      return d;
-    } },
-    { id: "device-detection", label: "Device Detection", content: function() {
-      const d = el("div", { className: "api-section-body" });
-      d.appendChild(el("p", { className: "api-section-desc" }, "Accurately detect what device a visitor is on — mobile, tablet, desktop, TV, game console, or bot — and show a smooth top-of-page notification while your layout adapts."));
-
-      function codeBlock(label, code, lang) {
-        const wrap = el("div", { className: "api-code-block" });
-        const header = el("div", { className: "api-code-header" },
-          el("span", { className: "api-code-lang" }, lang || "html"),
-          el("button", { className: "api-code-copy", onClick: function() { navigator.clipboard.writeText(code); this.textContent = "copied!"; setTimeout(() => { this.textContent = "copy"; }, 900); } }, "copy")
-        );
-        if (label) wrap.appendChild(el("div", { className: "api-code-label" }, label));
-        wrap.appendChild(header);
-        const pre = el("div", { className: "api-code-pre" }, code);
-        wrap.appendChild(pre);
-        return wrap;
-      }
-
-      d.appendChild(codeBlock("1. Include the script", '<script src="https://rebootcord.world/sdk/rebootdevice.js"></script>', "html"));
-      d.appendChild(codeBlock("2. Initialize", 'RebootDevice.init({ apiKey: "YOUR_API_KEY" });', "js"));
-      d.appendChild(codeBlock("3. Style using the applied class", '.rc-device-mobile .sidebar { display: none; }\n.rc-device-mobile .card { padding: 12px; }', "css"));
-
-      d.appendChild(el("div", { className: "api-sub-heading", style: { marginTop: "20px" } }, "What happens automatically"));
-      const stepsWrap = el("div", { className: "api-steps" });
-      [
-        { n: "01", title: "Detects the device", desc: "Combines user-agent parsing with touch/screen-size feature detection for accuracy across mobile, tablet, desktop, TV, and console." },
-        { n: "02", title: "Shows a notification", desc: "A green banner slides in top-middle: \"Detecting user device type\", then updates to \"User is on <device>\", then \"Now refresh the page so it fits for <device>.\"" },
-        { n: "03", title: "Applies a CSS class", desc: "Adds rc-device-mobile / rc-device-tablet / rc-device-desktop / rc-device-tv / rc-device-console to your root element so your CSS can adapt." }
-      ].forEach(function(s) {
-        stepsWrap.appendChild(el("div", { className: "api-step" },
-          el("div", { className: "api-step-num" }, s.n),
-          el("div", { className: "api-step-body" },
-            el("div", { className: "api-step-title" }, s.title),
-            el("div", { className: "api-step-desc" }, s.desc)
-          )
-        ));
-      });
-      d.appendChild(stepsWrap);
-
-      d.appendChild(el("div", { className: "api-sub-heading", style: { marginTop: "20px" } }, "API reference"));
-      const methods = [
-        { name: "RebootDevice.init(opts)", desc: "apiKey (optional, cross-checks server-side), root (CSS selector, default <html>), silent (skip the banner), autoRefresh (auto-reload after detecting), onDetected(info)." },
-        { name: "RebootDevice.getDevice()", desc: "Returns the last detected { type, os, browser }." },
-        { name: "GET /api/v1/device", desc: "Server-side detection endpoint. Send Authorization: YOUR_API_KEY. Returns { type, os, browser }." }
-      ];
-      const list = el("div", { className: "api-methods-list" });
-      methods.forEach(function(m) {
-        list.appendChild(el("div", { className: "api-method-row" },
-          el("code", { className: "api-method-name" }, m.name),
-          el("div", { className: "api-method-desc" }, m.desc)
-        ));
-      });
-      d.appendChild(list);
       return d;
     } },
     { id: "javascript", label: "Javascript", content: function() {
@@ -3424,7 +2650,7 @@ function renderChangelogModal() {
   const modal = el("div", { className: "modal changelog-modal" },
     el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" } },
       el("h2", { style: { margin: 0, fontSize: "17px", fontWeight: "800", letterSpacing: "-.02em" } }, "-- Post a changelog"),
-      el("button", { className: "modal-close-btn", onClick: () => { state.showChangelogModal = false; scheduleRender(); } }, "X")
+      el("button", { className: "modal-close-btn", onClick: () => { state.showChangelogModal = false; scheduleRender(); } }, "×")
     ),
     el("div", { className: "form-group" },
       el("label", { className: "form-label" }, "Enter changelog title name:"),
@@ -3508,24 +2734,6 @@ fetch("/api/me").then(r => r.json()).then(d => {
   }
   fetch("/api/projects").then(r => r.json()).then(pd => {
     if (pd && pd.projects) state.projects = pd.projects;
-    bindNotificationGestureAsk();
-    requestNotificationPermission(false);
-    checkInbox();
-    startInboxLive();
-    checkShareInvites();
-    fetchSharedProjects();
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        fetchSharedProjects();
-        checkShareInvites();
-        checkInbox({ showOverlayOnLoad: false });
-      }
-    });
-    if (window.RebootDevice) {
-      window.RebootDevice.init({ root: "html", onDetected: function(info) {
-        document.body.setAttribute("data-device", info.type);
-      } });
-    }
     const path = window.location.pathname || '';
     if (path === '/ourapi' || path === '/dashboard/ourapi') {
       state.page = 'ourapi';
