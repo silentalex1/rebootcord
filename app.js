@@ -224,6 +224,10 @@ function connectWS() {
         fetchSharedProjects();
         checkShareInvites();
       }
+      if (data.event === 'missingPackages' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
+        state.missingPackages = data.packages || [];
+        scheduleRender();
+      }
       if (data.event === 'inboxMessage') {
         const msg = data.message || {};
         if (msg.id) {
