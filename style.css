@@ -693,3 +693,4 @@ html.rc-device-tablet .api-nav-sidebar{width:180px}
 .kicked-box{background:var(--surface);border:1px solid var(--red);border-radius:16px;width:100%;max-width:420px;padding:32px;box-shadow:0 20px 60px rgba(0,0,0,.7);text-align:center;animation:inboxBoxIn .3s cubic-bezier(.34,1.56,.64,1)}
 .kicked-title{font-size:22px;font-weight:800;color:var(--red);margin-bottom:14px}
 .kicked-countdown{font-size:14px;color:var(--text-dim);font-weight:600}
+
