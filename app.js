@@ -9,9 +9,7 @@ const MC_VERSIONS = [
 ];
 const BOT_LANGS = ["JavaScript","TypeScript","Python","Lua","Java","Go","Rust","Ruby","C#","PHP","Kotlin","Dart"];
 const MC_SERVER_TYPES = ["Vanilla","Paper","Forge","Fabric","Spigot","Purpur"];
-const MAX_LOGS = 400;
-const EDITOR_HIGHLIGHT_MAX_CHARS = 120000;
-const EDITOR_HIGHLIGHT_MAX_LINES = 4000;
+const MAX_LOGS = 500;
 
 const FONTS = [
   { label: "Default", value: "" },
@@ -50,9 +48,6 @@ const state = {
   mcCmd: "",
   botLogs: [],
   mcLogs: [],
-  terminalLogs: [],
-  terminalInput: "",
-  consoleTab: "output",
   mcFiles: [],
   mcMods: [],
   mcBackups: [],
@@ -109,104 +104,52 @@ const state = {
   needsProjectPassword: false,
   projectUnlockInput: "",
   inboxUnread: false,
-  inboxUnreadCount: 0,
   showInboxNotification: false,
   shareInvites: [],
-  showShareInviteNotification: false,
-  knownInboxIds: null,
-  lastInboxNotifyId: null
+  showShareInviteNotification: false
 };
-
-const BASE_DOC_TITLE = "Reboot Cord";
-const NOTIF_PERM_KEY = "rc_notif_perm_asked";
-const NOTIF_DENIED_KEY = "rc_notif_denied";
 
 let ws;
 let searchTimeout = null;
-let wsReconnectDelay = 400;
-let wsHeartbeatTimer = null;
-let wsPingTimer = null;
-let actionLocks = {};
-
-function setProjectRunning(projectId, running) {
-  const id = String(projectId);
-  const p = state.projects.find(function(x){ return String(x.id) === id; });
-  if (p) p.running = !!running;
-  if (state.currentProject && String(state.currentProject.id) === id) state.currentProject.running = !!running;
-  const sp = state.sharedProjects.find(function(x){ return String(x.id) === id; });
-  if (sp) sp.running = !!running;
-}
-
-function clearWsTimers() {
-  if (wsHeartbeatTimer) { clearInterval(wsHeartbeatTimer); wsHeartbeatTimer = null; }
-  if (wsPingTimer) { clearTimeout(wsPingTimer); wsPingTimer = null; }
-}
 
 function connectWS() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  try { if (ws) { ws.onclose = null; ws.onerror = null; ws.onmessage = null; ws.close(); } } catch (e) {}
-  clearWsTimers();
   ws = new WebSocket(protocol + '//' + location.host);
-  ws.onopen = function() {
-    wsReconnectDelay = 400;
-    clearWsTimers();
-    wsHeartbeatTimer = setInterval(function() {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({ event: 'ping', t: Date.now() })); } catch (e) {}
-      }
-    }, 12000);
-  };
   ws.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
-      if (data.event === 'pong') return;
-      if (data.event === 'status') {
-        setProjectRunning(data.projectId, !!data.running);
-        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-          patchRunningStatus(!!data.running);
-        } else if (state.page === 'projects') {
-          scheduleRender();
-        }
-        return;
-      }
       if (data.event === 'log') {
-        const p = state.projects.find(x => String(x.id) === String(data.projectId)) || state.sharedProjects.find(x => String(x.id) === String(data.projectId));
-        if (!p && !(state.currentProject && String(state.currentProject.id) === String(data.projectId))) return;
-        const projType = (p && p.type) || (state.currentProject && state.currentProject.type) || 'discord';
-        const isMc = projType === 'minecraft';
-        const tgt = isMc ? state.mcLogs : state.botLogs;
-        const logEntry = { t: getTime(), type: data.type, msg: data.msg };
-        tgt.push(logEntry);
+        const p = state.projects.find(x => String(x.id) === String(data.projectId)) || (state.sharedProjects && state.sharedProjects.find(x => String(x.id) === String(data.projectId)));
+        if (!p) return;
+        const tgt = p.type === 'minecraft' ? state.mcLogs : state.botLogs;
+        tgt.push({ t: getTime(), type: data.type, msg: data.msg });
         trimLogs(tgt);
 
-        let needFullRender = false;
         const m1 = data.msg.match(/Missing package: (.+)/);
         if (m1 && m1[1]) {
           const pk = m1[1].trim();
-          if (pk && state.missingPackages.indexOf(pk) === -1) {
-            state.missingPackages.push(pk);
-            needFullRender = true;
-          }
+          if (pk && state.missingPackages.indexOf(pk) === -1) state.missingPackages.push(pk);
         }
         const m2 = data.msg.match(/ModuleNotFoundError: No module named '([^']+)'/);
         if (m2 && m2[1]) {
           const pk = m2[1].trim();
-          if (pk && state.missingPackages.indexOf(pk) === -1) {
-            state.missingPackages.push(pk);
-            needFullRender = true;
-          }
+          if (pk && state.missingPackages.indexOf(pk) === -1) state.missingPackages.push(pk);
         }
-
-        if (data.msg && (data.msg.indexOf("Process exited") !== -1 || data.msg.indexOf("forcefully killed") !== -1 || data.msg.indexOf("Process stopped") !== -1 || data.msg.indexOf("stopped manually") !== -1)) {
-          setProjectRunning(data.projectId, false);
-          if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) patchRunningStatus(false);
-        }
+        
         if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-          if (needFullRender) scheduleRender();
-          else if (!appendConsoleLogLine(logEntry, isMc)) scheduleRender();
-        } else if (state.page === 'projects') {
+          if (data.msg && (data.msg.indexOf("Process exited") !== -1 || data.msg.indexOf("forcefully killed") !== -1 || data.msg.indexOf("stopped manually") !== -1)) {
+            const pp = state.projects.find(function(x){ return String(x.id) === String(data.projectId); });
+            if (pp) pp.running = false;
+            if (state.currentProject) state.currentProject.running = false;
+          }
           scheduleRender();
         }
+      }
+      if (data.event === 'statusChange') {
+        const p3 = state.projects.find(x => String(x.id) === String(data.projectId)) || (state.sharedProjects && state.sharedProjects.find(x => String(x.id) === String(data.projectId)));
+        if (p3) p3.running = data.running;
+        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) state.currentProject.running = data.running;
+        scheduleRender();
       }
       if (data.event === 'installAllDone' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
         state.installingAll = false;
@@ -221,62 +164,27 @@ function connectWS() {
         if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
           showKickedOverlay();
         }
-        fetchSharedProjects();
       }
       if (data.event === 'addedToProject') {
         fetchSharedProjects();
         checkShareInvites();
       }
-      if (data.event === 'missingPackages' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-        state.missingPackages = data.packages || [];
+      if (data.event === 'terminalOutput' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
+        state.terminalLines = state.terminalLines || [];
+        state.terminalLines.push({ type: 'out', text: data.line });
         scheduleRender();
       }
-      if (data.event === 'terminalOutput' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-        state.terminalLogs.push({ t: getTime(), type: data.type || 'info', msg: data.msg });
-        if (state.terminalLogs.length > MAX_LOGS) state.terminalLogs.shift();
-        if (state.consoleTab === "terminal") scheduleRender();
-      }
-      if (data.event === 'inboxMessage') {
-        const msg = data.message || {};
-        if (msg.id) {
-          if (!state.knownInboxIds) state.knownInboxIds = {};
-          if (!state.knownInboxIds[String(msg.id)]) {
-            state.knownInboxIds[String(msg.id)] = true;
-            state.lastInboxNotifyId = msg.id;
-            state.inboxUnreadCount = (state.inboxUnreadCount || 0) + 1;
-            updateDocumentTitle(state.inboxUnreadCount);
-            showBrowserInboxNotification(msg.body || msg.title || "You have a new inbox message.", msg.id);
-            state.showInboxNotification = true;
-            scheduleRender();
-          }
-        }
-        checkInbox({ showOverlayOnLoad: false });
+      if (data.event === 'terminalFsChange' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
+        refreshFileTree(state.currentProject);
       }
     } catch(err) {}
   };
-  ws.onerror = function() {
-    try { if (ws) ws.close(); } catch (e) {}
-  };
   ws.onclose = () => {
-    clearWsTimers();
-    const delay = wsReconnectDelay;
-    wsReconnectDelay = Math.min(wsReconnectDelay * 1.6, 5000);
-    setTimeout(connectWS, delay);
+    setTimeout(connectWS, 2000);
   };
 }
 
 connectWS();
-
-document.addEventListener('visibilitychange', function() {
-  if (document.visibilityState === 'visible') {
-    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-      wsReconnectDelay = 400;
-      connectWS();
-    } else if (ws.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify({ event: 'ping', t: Date.now() })); } catch (e) {}
-    }
-  }
-});
 
 let renderPending = false;
 
@@ -302,239 +210,21 @@ function trimLogs(arr) {
   }
 }
 
-function appendConsoleLogLine(log, isMc) {
-  const sel = isMc ? ".mc-console-body" : ".console-body";
-  const body = document.querySelector(sel);
-  if (!body) return false;
-  const empty = body.querySelector('[data-console-empty="1"]');
-  if (empty) empty.remove();
-  while (body.children.length >= MAX_LOGS) {
-    body.removeChild(body.firstChild);
-  }
-  const row = document.createElement("div");
-  row.className = "log-line";
-  const t = document.createElement("span");
-  t.className = "log-time";
-  t.textContent = log.t;
-  const m = document.createElement("span");
-  m.className = "log-" + (log.type || "info");
-  m.textContent = log.msg;
-  row.appendChild(t);
-  row.appendChild(m);
-  body.appendChild(row);
-  body.scrollTop = body.scrollHeight;
-  return true;
-}
-
-function patchRunningStatus(running) {
-  document.querySelectorAll(".status-chip").forEach(function(chip) {
-    const isDiscord = chip.classList.contains("discord") || chip.closest(".discord-nav");
-    chip.className = "status-chip" + (running ? (isDiscord ? " discord" : "") : " stopped");
-    const dot = chip.querySelector(".status-dot");
-    if (dot) dot.className = "status-dot" + (running ? (isDiscord ? " discord" : "") : " stopped");
-    const textNode = Array.from(chip.childNodes).find(function(n) { return n.nodeType === 3; });
-    if (textNode) textNode.textContent = running ? " Running" : " Stopped";
-    else {
-      const labels = chip.querySelectorAll("span,div");
-    }
-    chip.childNodes.forEach(function(n) {
-      if (n.nodeType === 3) n.textContent = running ? " Running" : " Stopped";
-    });
-  });
-  document.querySelectorAll(".btn-stop-discord,.btn-start-discord,.btn-stop,.btn-start").forEach(function(btn) {
-    const isDiscord = btn.classList.contains("btn-stop-discord") || btn.classList.contains("btn-start-discord");
-    if (running) {
-      btn.className = isDiscord ? "btn-stop-discord" : "btn-stop";
-    } else {
-      btn.className = isDiscord ? "btn-start-discord" : "btn-start";
-    }
-  });
-}
-
 function getTime() {
   return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function updateDocumentTitle(count) {
-  const n = Math.max(0, Number(count) || 0);
-  state.inboxUnreadCount = n;
-  state.inboxUnread = n > 0;
-  const next = n > 0 ? (BASE_DOC_TITLE + " (" + n + ")") : BASE_DOC_TITLE;
-  if (document.title !== next) document.title = next;
-  try {
-    if (n > 0) document.documentElement.setAttribute("data-inbox-unread", String(n));
-    else document.documentElement.removeAttribute("data-inbox-unread");
-  } catch (e) {}
-}
-
-function ensureNotifPromptStyles() {
-  if (document.getElementById("rc-notif-prompt-style")) return;
-  const style = document.createElement("style");
-  style.id = "rc-notif-prompt-style";
-  style.textContent = ".rc-notif-prompt{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147483001;display:flex;align-items:center;gap:12px;max-width:min(520px,92vw);padding:12px 14px;border-radius:12px;background:#121212;border:1px solid #2d2d2d;box-shadow:0 12px 40px rgba(0,0,0,.45);font-family:var(--font),sans-serif;color:#e8e8ec}.rc-notif-prompt-text{font-size:13px;line-height:1.4;flex:1}.rc-notif-prompt-actions{display:flex;gap:8px;flex-shrink:0}.rc-notif-prompt-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer}.rc-notif-prompt-btn.primary{background:#e63946;color:#fff}.rc-notif-prompt-btn.ghost{background:#1e1e1e;color:#9a9aa2;border:1px solid #2d2d2d}";
-  document.head.appendChild(style);
-}
-
-function hideNotifPrompt() {
-  const el = document.getElementById("rc-notif-prompt");
-  if (el && el.parentNode) el.parentNode.removeChild(el);
-}
-
-function showNotifPermissionPrompt() {
-  if (typeof Notification === "undefined") return;
-  if (Notification.permission !== "default") return;
-  if (document.getElementById("rc-notif-prompt")) return;
-  ensureNotifPromptStyles();
-  const box = document.createElement("div");
-  box.id = "rc-notif-prompt";
-  box.className = "rc-notif-prompt";
-  const text = document.createElement("div");
-  text.className = "rc-notif-prompt-text";
-  text.textContent = "Allow notifications so you get alerted for new inbox messages.";
-  const actions = document.createElement("div");
-  actions.className = "rc-notif-prompt-actions";
-  const allow = document.createElement("button");
-  allow.className = "rc-notif-prompt-btn primary";
-  allow.type = "button";
-  allow.textContent = "Allow";
-  const later = document.createElement("button");
-  later.className = "rc-notif-prompt-btn ghost";
-  later.type = "button";
-  later.textContent = "Not now";
-  allow.onclick = function() {
-    hideNotifPrompt();
-    requestNotificationPermission(true);
-  };
-  later.onclick = function() {
-    try { localStorage.setItem(NOTIF_PERM_KEY, "dismissed"); } catch (e) {}
-    hideNotifPrompt();
-  };
-  actions.appendChild(later);
-  actions.appendChild(allow);
-  box.appendChild(text);
-  box.appendChild(actions);
-  document.body.appendChild(box);
-}
-
-function requestNotificationPermission(force) {
-  if (typeof Notification === "undefined") return Promise.resolve("unsupported");
-  if (Notification.permission === "granted") {
-    try { localStorage.setItem(NOTIF_PERM_KEY, "granted"); } catch (e) {}
-    hideNotifPrompt();
-    return Promise.resolve("granted");
-  }
-  if (Notification.permission === "denied") {
-    try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); localStorage.setItem(NOTIF_PERM_KEY, "denied"); } catch (e) {}
-    hideNotifPrompt();
-    return Promise.resolve("denied");
-  }
-  if (!force) {
-    let status = "";
-    try { status = localStorage.getItem(NOTIF_PERM_KEY) || ""; } catch (e) {}
-    if (status === "dismissed") return Promise.resolve("default");
-    if (document.body) showNotifPermissionPrompt();
-    else document.addEventListener("DOMContentLoaded", showNotifPermissionPrompt, { once: true });
-    return Promise.resolve("default");
-  }
-  return Notification.requestPermission().then(function(p) {
-    try { localStorage.setItem(NOTIF_PERM_KEY, p || "default"); } catch (e) {}
-    if (p === "denied") {
-      try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); } catch (e) {}
+function checkInbox() {
+  fetch('/api/inbox').then(r => r.json()).then(data => {
+    if (data.success && data.messages) {
+      const unread = data.messages.filter(m => !m.read);
+      if (unread.length > 0 && !state.showInboxNotification) {
+        state.inboxUnread = true;
+        state.showInboxNotification = true;
+        scheduleRender();
+      }
     }
-    if (p === "granted") hideNotifPrompt();
-    return p;
-  }).catch(function() { return "default"; });
-}
-
-function bindNotificationGestureAsk() {
-  if (window.__rcNotifGestureBound) return;
-  window.__rcNotifGestureBound = true;
-  const tryAsk = function() {
-    if (typeof Notification === "undefined") return;
-    if (Notification.permission !== "default") return;
-    let status = "";
-    try { status = localStorage.getItem(NOTIF_PERM_KEY) || ""; } catch (e) {}
-    if (status === "dismissed" || status === "denied") return;
-    requestNotificationPermission(true);
-  };
-  ["pointerdown", "click", "keydown", "touchstart"].forEach(function(ev) {
-    document.addEventListener(ev, tryAsk, { once: true, capture: true, passive: true });
   });
-}
-
-function showBrowserInboxNotification(messageText, messageId) {
-  if (typeof Notification === "undefined") return;
-  if (Notification.permission !== "granted") {
-    if (Notification.permission === "default") showNotifPermissionPrompt();
-    return;
-  }
-  try {
-    const n = new Notification("New inbox message has been added check it out", {
-      body: String(messageText || "You have a new inbox message."),
-      tag: messageId ? ("rc-inbox-" + String(messageId)) : "rc-inbox",
-      renotify: true,
-      silent: false
-    });
-    n.onclick = function() {
-      try { window.focus(); } catch (e) {}
-      window.location.href = "/inbox";
-      try { n.close(); } catch (e2) {}
-    };
-    setTimeout(function() { try { n.close(); } catch (e3) {} }, 12000);
-  } catch (e) {}
-}
-
-function applyInboxState(messages, opts) {
-  opts = opts || {};
-  const list = Array.isArray(messages) ? messages : [];
-  const unread = list.filter(function(m) { return !m.read; });
-  const ids = {};
-  list.forEach(function(m) { ids[String(m.id)] = true; });
-  const prevKnown = state.knownInboxIds;
-  const isFirstLoad = prevKnown === null;
-  const fresh = [];
-  if (!isFirstLoad) {
-    list.forEach(function(m) {
-      if (!prevKnown[String(m.id)]) fresh.push(m);
-    });
-  }
-  state.knownInboxIds = ids;
-  updateDocumentTitle(unread.length);
-
-  if (fresh.length) {
-    fresh.forEach(function(msg) {
-      if (String(msg.id) === String(state.lastInboxNotifyId)) return;
-      state.lastInboxNotifyId = msg.id;
-      showBrowserInboxNotification(msg.body || msg.title || "You have a new inbox message.", msg.id);
-    });
-    state.showInboxNotification = true;
-    scheduleRender();
-  } else if (!isFirstLoad && unread.length === 0) {
-    state.showInboxNotification = false;
-  } else if (isFirstLoad && unread.length > 0 && opts.showOverlayOnLoad !== false) {
-    state.showInboxNotification = true;
-    scheduleRender();
-  }
-}
-
-function checkInbox(opts) {
-  return fetch('/api/inbox', { cache: "no-store" }).then(r => r.json()).then(data => {
-    if (data && data.success && data.messages) {
-      applyInboxState(data.messages, opts || {});
-    }
-    return data;
-  }).catch(function() { return null; });
-}
-
-function startInboxLive() {
-  if (window.__rcInboxLiveStarted) return;
-  window.__rcInboxLiveStarted = true;
-  setInterval(function() { checkInbox({ showOverlayOnLoad: false }); }, 2000);
-  document.addEventListener("visibilitychange", function() {
-    if (document.visibilityState === "visible") checkInbox({ showOverlayOnLoad: false });
-  });
-  window.addEventListener("focus", function() { checkInbox({ showOverlayOnLoad: false }); });
-  window.addEventListener("pageshow", function() { checkInbox({ showOverlayOnLoad: false }); });
 }
 
 function fetchSharedProjects() {
@@ -601,58 +291,29 @@ function detectDependencies(code, lang) {
   return Array.from(deps);
 }
 
-function withActionLock(id, fn) {
-  const key = String(id);
-  if (actionLocks[key]) return Promise.resolve({ success: false, busy: true });
-  actionLocks[key] = true;
-  return Promise.resolve().then(fn).finally(function() {
-    setTimeout(function() { delete actionLocks[key]; }, 250);
-  });
-}
-
 function killProject(p) {
-  if (!p) return Promise.resolve();
-  return withActionLock(p.id, function() {
-    setProjectRunning(p.id, false);
-    scheduleRender();
-    return fetch("/api/projects/" + p.id + "/kill", { method: "POST" })
-      .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
-      .then(function(data){
-        setProjectRunning(p.id, false);
-        scheduleRender();
-        return data;
-      })
-      .catch(function(){
-        setProjectRunning(p.id, false);
-        scheduleRender();
-        return { success: false };
-      });
-  });
+  if (!p) return;
+  p.running = false;
+  const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
+  if (proj) proj.running = false;
+  if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = false;
+  scheduleRender();
+  fetch("/api/projects/" + p.id + "/kill", { method: "POST" });
 }
 
 function restartProject(p) {
-  if (!p) return Promise.resolve();
-  return withActionLock(p.id, function() {
-    setProjectRunning(p.id, false);
+  if (!p) return;
+  p.running = false;
+  const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
+  if (proj) proj.running = false;
+  if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = false;
+  scheduleRender();
+  fetch("/api/projects/" + p.id + "/restart", { method: "POST" }).then(function(r) { return r.json(); }).then(function() {
+    p.running = true;
+    const proj2 = state.projects.find(function(x){ return String(x.id) === String(p.id); });
+    if (proj2) proj2.running = true;
+    if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = true;
     scheduleRender();
-    return fetch("/api/projects/" + p.id + "/kill", { method: "POST" })
-      .then(function(r){ return r.json().catch(function(){ return { success: true }; }); })
-      .then(function(){
-        return new Promise(function(resolve){ setTimeout(resolve, 450); });
-      })
-      .then(function(){
-        return fetch("/api/projects/" + p.id + "/start", { method: "POST" }).then(function(r){ return r.json().catch(function(){ return { success: false }; }); });
-      })
-      .then(function(data){
-        setProjectRunning(p.id, !!(data && data.success));
-        scheduleRender();
-        return data;
-      })
-      .catch(function(){
-        setProjectRunning(p.id, false);
-        scheduleRender();
-        return { success: false };
-      });
   });
 }
 
@@ -827,15 +488,14 @@ function renderAIChatButton() {
 
 function renderInboxNotification() {
   if (!state.showInboxNotification) return null;
-  const countLabel = state.inboxUnreadCount > 0 ? String(state.inboxUnreadCount) : "unread";
   const overlay = el("div", { className: "inbox-notification-overlay" },
     el("div", { className: "inbox-notification-box" },
       el("div", { className: "inbox-notification-header" },
-        el("div", { className: "inbox-notification-badge" }, countLabel),
-        el("button", { className: "inbox-notification-close", onClick: () => { state.showInboxNotification = false; scheduleRender(); } }, "X")
+        el("div", { className: "inbox-notification-badge" }, "unread"),
+        el("button", { className: "inbox-notification-close", onClick: () => { state.showInboxNotification = false; scheduleRender(); } }, "×")
       ),
       el("div", { className: "inbox-notification-content" },
-        el("div", { className: "inbox-notification-title" }, "New inbox message has been added check it out"),
+        el("div", { className: "inbox-notification-title" }, "New inbox message has been posted!"),
         el("button", { className: "inbox-notification-btn", onClick: () => { window.location.href = "/inbox"; } }, "check it out")
       )
     )
@@ -850,7 +510,7 @@ function renderShareInviteNotification() {
     el("div", { className: "inbox-notification-box" },
       el("div", { className: "inbox-notification-header" },
         el("div", { className: "inbox-notification-badge" }, "shared"),
-        el("button", { className: "inbox-notification-close", onClick: () => { acknowledgeShareInvite(invite); } }, "X")
+        el("button", { className: "inbox-notification-close", onClick: () => { acknowledgeShareInvite(invite); } }, "×")
       ),
       el("div", { className: "inbox-notification-content" },
         el("div", { className: "inbox-notification-title" }, invite.sender + " has shared their " + invite.projectName + " with you!"),
@@ -888,7 +548,7 @@ function renderAIChatUI() {
       state.showFeedbackManagement = false; 
       state.currentFeedbackUser = null; 
       scheduleRender(); 
-    } }, "X")
+    } }, "×")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -969,7 +629,7 @@ function renderFeedbackManagement() {
   
   const header = el("div", { className: "ai-chat-header" },
     el("div", { className: "ai-chat-title" }, svgIcon("ai"), " PrysmisAI Feedback"),
-    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; scheduleRender(); } }, "X")
+    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; scheduleRender(); } }, "×")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -1015,7 +675,7 @@ function renderFeedbackChat(overlay, chatBox) {
   const header = el("div", { className: "ai-chat-header" },
     el("button", { className: "ai-chat-back", onClick: () => { state.currentFeedbackUser = null; scheduleRender(); } }, svgIcon("back")),
     el("div", { className: "ai-chat-title" }, svgIcon("ai"), " PrysmisAI with " + user.username),
-    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; state.currentFeedbackUser = null; scheduleRender(); } }, "X")
+    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; state.currentFeedbackUser = null; scheduleRender(); } }, "×")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -1157,45 +817,22 @@ async function sendAIMessage(content) {
   }
 }
 
-function escapeHtml(text) {
-  return String(text || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function countLinesFast(text) {
-  if (!text) return 1;
-  let n = 1;
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) n++;
-  }
-  return n;
-}
-
-function buildLineNumbers(count) {
-  if (count <= 1) return "1";
-  const parts = new Array(count);
-  for (let i = 0; i < count; i++) parts[i] = String(i + 1);
-  return parts.join("\n");
-}
-
 function highlightCode(text, type) {
-  const raw = text || "";
-  if (raw.length > EDITOR_HIGHLIGHT_MAX_CHARS || countLinesFast(raw) > EDITOR_HIGHLIGHT_MAX_LINES) {
-    return escapeHtml(raw);
-  }
-  let html = escapeHtml(raw);
+  let html = (text || "").replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const isMc = type === 'minecraft';
   const kwColor = isMc ? '#6dbd3d' : '#7289da';
   const strColor = isMc ? '#a8d5a2' : '#9ece6a';
+  
   const strings = [];
-  html = html.replace(/("[^"\n]*"|'[^'\n]*'|`[^`\n]*`)/g, function(m) {
+  html = html.replace(/("[^"]*"|'[^']*'|\`[^`]*\`)/g, (m) => {
     strings.push('<span style="color:' + strColor + '">' + m + '</span>');
     return '__STR' + (strings.length - 1) + '__';
   });
+  
   html = html.replace(/\b(import|from|const|let|var|function|async|await|return|if|elif|else|for|while|class|require|def|try|except|catch|pass|True|False|None|null|undefined|new|this)\b/g, '<span style="color:' + kwColor + ';font-weight:bold">$1</span>');
-  html = html.replace(/__STR(\d+)__/g, function(m, p1) { return strings[parseInt(p1, 10)] || m; });
+  
+  html = html.replace(/__STR(\d+)__/g, (m, p1) => strings[parseInt(p1, 10)]);
+  
   return html;
 }
 
@@ -1205,8 +842,8 @@ function fetchProjectAccess(id) {
       state.projectAccess = d;
       state.settingsName = d.name || "";
       state.settingsPrivate = !!d.private;
-      state.settingsPassword = d.isOwner ? (d.password || "") : "";
       state.needsProjectPassword = !!d.locked;
+      if (d.isOwner) state.settingsPassword = d.password || "";
       scheduleRender();
     } else if (d.removed && state.currentProject && String(state.currentProject.id) === String(id)) {
       showKickedOverlay();
@@ -1410,7 +1047,7 @@ function renderSettingsModal() {
   }));
   if (isOwner) {
     modal.appendChild(el("label", { className: "modal-label" }, "Current project password"));
-    modal.appendChild(el("input", { className: "modal-input", type: "text", placeholder: access.hasPassword || state.settingsPassword ? "" : "No password set", value: state.settingsPassword || "", oninput: (e) => { state.settingsPassword = e.target.value; } }));
+    modal.appendChild(el("input", { className: "modal-input", type: "text", placeholder: access.hasPassword ? "••••••••" : "No password set", value: state.settingsPassword, oninput: (e) => { state.settingsPassword = e.target.value; } }));
     modal.appendChild(el("label", { className: "share-checkbox", style: { marginTop: "10px" } },
       el("input", { type: "checkbox", checked: state.settingsPrivate, onChange: (e) => { state.settingsPrivate = e.target.checked; scheduleRender(); } }),
       " Make project private"
@@ -1496,6 +1133,21 @@ function saveCurrentFile() {
   const proj = state.projects.find(x => x.id === state.currentProject.id);
   if (proj) proj.files = state.currentProject.files;
   saveProjects();
+}
+
+function refreshFileTree(proj) {
+  if (!proj) return;
+  fetch('/api/projects/' + proj.id + '/dir').then(r => r.json()).then(d => {
+    if (d.success) {
+      if (state.currentProject && String(state.currentProject.id) === String(proj.id)) {
+        state.currentFileTree = d.files || [];
+      }
+      const flat = collectFiles(d.files || []);
+      proj.files = proj.files || {};
+      flat.forEach(function(f){ if (!f.isDir) { const k = f.rel || f.name; if (proj.files[k] === undefined) proj.files[k] = null; } });
+      scheduleRender();
+    }
+  });
 }
 
 function switchFile(filename) {
@@ -1880,7 +1532,7 @@ function createProject() {
   state.currentProject = p;
   state.newName = ""; state.newMcIp = ""; state.newMcServerType = "Vanilla";
   state.mcView = "overview"; state.mcFiles = []; state.mcMods = []; state.mcBackups = [];
-  state.botLogs = []; state.mcLogs = []; state.terminalLogs = []; state.missingPackages = []; state.consoleTab = "output";
+  state.botLogs = []; state.mcLogs = []; state.missingPackages = [];
   state.searchTerm = ""; state.currentFileTree = []; state.expandedFolders = [];
   if (p.type === "discord") {
     state.editorFile = getDefaultFilename(p);
@@ -1907,7 +1559,7 @@ function openProject(id) {
   state.mcFiles = p._mcFiles || [];
   state.mcMods = p._mcMods || [];
   state.mcBackups = p._mcBackups || [];
-  state.botLogs = []; state.mcLogs = []; state.terminalLogs = []; state.missingPackages = []; state.consoleTab = "output";
+  state.botLogs = []; state.mcLogs = []; state.missingPackages = [];
   state.expandedFolders = [];
   state.currentFileTree = [];
   state.projectAccess = null;
@@ -1953,78 +1605,43 @@ function openProject(id) {
 
 function deleteProject(id) {
   if (!confirm("Delete this project?")) return;
-  const p = state.projects.find(x => String(x.id) === String(id));
-  withActionLock(id, function() {
-    setProjectRunning(id, false);
-    if (state.currentProject && String(state.currentProject.id) === String(id)) {
-      state.currentProject = null;
-      state.page = "projects";
-    }
-    scheduleRender();
-    return fetch("/api/projects/" + id + "/delete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" }
-    }).then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
-      .then(function(data){
-        if (data && data.success) {
-          state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
-          scheduleRender();
-          return data;
-        }
-        return fetch("/api/projects/" + id + "/kill", { method: "POST" })
-          .then(function(){
-            state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
-            saveProjects();
-            scheduleRender();
-            return { success: true };
-          });
-      })
-      .catch(function(){
-        state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
-        saveProjects();
-        scheduleRender();
-        return { success: false };
-      });
-  });
+  const p = state.projects.find(x => x.id === id);
+  state.projects = state.projects.filter(function(x){ return x.id !== id; });
+  if (state.currentProject && state.currentProject.id === id) { state.currentProject = null; state.page = "projects"; }
+  scheduleRender();
+  fetch("/api/projects/" + id + "/delete", { method: "POST" });
 }
 
 function toggleRunning(p) {
   if (!p) return;
-  withActionLock(p.id, function() {
-    const wasRunning = !!p.running;
-    const nextRunning = !wasRunning;
-    setProjectRunning(p.id, nextRunning);
-    scheduleRender();
+  const wasRunning = p.running;
+  const nextRunning = !wasRunning;
 
-    if (nextRunning) {
-      return fetch("/api/projects/" + p.id + "/start", { method: "POST" })
-        .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
-        .then(function(data){
-          setProjectRunning(p.id, !!(data && data.success));
-          scheduleRender();
-          return data;
-        })
-        .catch(function(){
-          setProjectRunning(p.id, false);
-          scheduleRender();
-          return { success: false };
-        });
-    }
+  p.running = nextRunning;
+  const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
+  if (proj) proj.running = nextRunning;
+  if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = nextRunning;
+  scheduleRender();
 
-    return fetch("/api/projects/" + p.id + "/stop", { method: "POST" })
-      .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
-      .then(function(data){
-        if (data && data.success) setProjectRunning(p.id, false);
-        else setProjectRunning(p.id, true);
+  if (nextRunning) {
+    fetch("/api/projects/" + p.id + "/start", { method: "POST" }).then(function(r){ return r.json(); }).then(function(data){
+      if (!data.success) {
+        p.running = false;
+        if (proj) proj.running = false;
+        if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = false;
         scheduleRender();
-        return data;
-      })
-      .catch(function(){
-        setProjectRunning(p.id, true);
+      }
+    });
+  } else {
+    fetch("/api/projects/" + p.id + "/stop", { method: "POST" }).then(function(r){ return r.json(); }).then(function(data){
+      if (!data.success) {
+        p.running = true;
+        if (proj) proj.running = true;
+        if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = true;
         scheduleRender();
-        return { success: false };
-      });
-  });
+      }
+    });
+  }
 }
 
 function flashSaveBtn(btn) {
@@ -2048,16 +1665,6 @@ function installPkg() {
   state.installingPkg = true;
   ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: v }));
   if (input) input.value = "";
-  scheduleRender();
-}
-
-function executeTerminalCommand(cmd) {
-  if (!ws || !state.currentProject) return;
-  
-  state.terminalLogs.push({ t: getTime(), type: 'command', msg: '$ ' + cmd });
-  if (state.terminalLogs.length > MAX_LOGS) state.terminalLogs.shift();
-  
-  ws.send(JSON.stringify({ event: 'terminalCommand', projectId: state.currentProject.id, command: cmd }));
   scheduleRender();
 }
 
@@ -2151,16 +1758,7 @@ function renderBotDashboard() {
   const filesSection = el("div", { className: "sidebar-section" },
     el("div", { className: "sidebar-label discord-label", style: { display: "flex", justifyContent: "space-between", width: "100%" } }, 
       el("span", {}, svgIcon("folder"), " Files"),
-      el("button", { className: "btn-clear", style: { margin: "0" }, onClick: () => {
-        fetch('/api/projects/' + p.id + '/dir').then(r => r.json()).then(d => {
-          if (d.success) {
-            state.currentFileTree = d.files || [];
-            const flat = collectFiles(d.files || []);
-            flat.forEach(function(f){ if (!f.isDir) { const k = f.rel || f.name; if (p.files[k] === undefined) p.files[k] = null; } });
-            scheduleRender();
-          }
-        });
-      }}, "Refresh")
+      el("button", { className: "btn-clear", style: { margin: "0" }, onClick: () => { refreshFileTree(p); } }, "Refresh")
     )
   );
 
@@ -2267,35 +1865,21 @@ function renderBotDashboard() {
 
   const ta = el("textarea", { className: "code-editor", spellcheck: "false", wrap: "off" });
   ta.value = state.codeContent || "";
-  ta.setAttribute("autocomplete", "off");
-  ta.setAttribute("autocorrect", "off");
-  ta.setAttribute("autocapitalize", "off");
   
   const hl = el("div", { className: "highlight-layer" });
   
   const lineNums = el("div", { className: "line-numbers" });
   
   let editTimeout;
-  let lastLineCount = -1;
-  let highlightRaf = 0;
-  const updateEditor = (force) => {
-    const text = state.codeContent || "";
-    const count = countLinesFast(text);
-    if (force || count !== lastLineCount) {
-      lineNums.innerText = buildLineNumbers(count);
-      lastLineCount = count;
-    }
-    const large = text.length > EDITOR_HIGHLIGHT_MAX_CHARS || count > EDITOR_HIGHLIGHT_MAX_LINES;
-    if (large) {
-      hl.textContent = text;
-      hl.classList.add("plain");
-    } else {
-      hl.classList.remove("plain");
-      hl.innerHTML = highlightCode(text, p.type);
-    }
+  const updateEditor = () => {
+    const count = (state.codeContent.match(/\n/g) || []).length + 1;
+    const arr = [];
+    for(let i=1; i<=count; i++) arr.push(i);
+    lineNums.innerText = arr.join('\n');
+    hl.innerHTML = highlightCode(state.codeContent, p.type);
   };
   
-  updateEditor(true);
+  updateEditor();
 
   ta.onscroll = () => { 
     lineNums.scrollTop = ta.scrollTop; 
@@ -2304,17 +1888,9 @@ function renderBotDashboard() {
   };
   
   ta.oninput = () => { 
-    state.codeContent = ta.value;
+    state.codeContent = ta.value; 
     clearTimeout(editTimeout);
-    const len = (state.codeContent || "").length;
-    const delay = len > 80000 ? 320 : (len > 25000 ? 160 : 70);
-    editTimeout = setTimeout(function() {
-      if (highlightRaf) cancelAnimationFrame(highlightRaf);
-      highlightRaf = requestAnimationFrame(function() {
-        highlightRaf = 0;
-        updateEditor(false);
-      });
-    }, delay);
+    editTimeout = setTimeout(updateEditor, 50);
   };
 
   const editorWrapper = el("div", { className: "editor-wrapper" }, lineNums, el("div", { className: "code-container" }, hl, ta));
@@ -2354,84 +1930,108 @@ function renderBotDashboard() {
 }
 
 function buildConsole() {
+  const tab = state.consoleTab || 'console';
+  const tabs = el("div", { className: "console-tabs" },
+    el("button", { className: "console-tab-btn" + (tab === 'console' ? ' active' : ''), onClick: () => { state.consoleTab = 'console'; scheduleRender(); } }, "Console"),
+    el("button", { className: "console-tab-btn" + (tab === 'terminal' ? ' active' : ''), onClick: () => { state.consoleTab = 'terminal'; scheduleRender(); } }, "Terminal")
+  );
+
+  if (tab === 'terminal') {
+    return el("div", { className: "console-panel discord-console" },
+      el("div", { className: "console-toolbar discord-console-toolbar" },
+        tabs,
+        el("div", { className: "console-controls" },
+          el("button", { className: "btn-clear", onClick: () => { state.terminalLines = []; scheduleRender(); } }, "Clear")
+        )
+      ),
+      buildTerminalBody()
+    );
+  }
+
   const body = el("div", { className: "console-body" });
   if (state.botLogs.length === 0) {
-    body.appendChild(el("div", { "data-console-empty": "1", style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
-  } else {
-    const frag = document.createDocumentFragment();
-    const start = Math.max(0, state.botLogs.length - MAX_LOGS);
-    for (let i = start; i < state.botLogs.length; i++) {
-      const l = state.botLogs[i];
-      frag.appendChild(el("div", { className: "log-line" },
-        el("span", { className: "log-time" }, l.t),
-        el("span", { className: "log-" + l.type }, l.msg)
-      ));
-    }
-    body.appendChild(frag);
+    body.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
   }
-
-  const terminalBody = el("div", { className: "terminal-body" });
-  if (state.terminalLogs.length === 0) {
-    terminalBody.appendChild(el("div", { "data-terminal-empty": "1", style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Terminal output will appear here."));
-  } else {
-    const frag = document.createDocumentFragment();
-    state.terminalLogs.forEach(l => {
-      frag.appendChild(el("div", { className: "terminal-line" },
-        el("span", { className: "terminal-time" }, l.t),
-        el("span", { className: "terminal-" + l.type }, l.msg)
-      ));
-    });
-    terminalBody.appendChild(frag);
-  }
-
-  const terminalInput = el("input", { className: "terminal-input", placeholder: "type 'help' to show commands", value: state.terminalInput });
-  terminalInput.oninput = () => { state.terminalInput = terminalInput.value; };
-  terminalInput.onkeydown = (ev) => {
-    if (ev.key === "Enter") {
-      const cmd = state.terminalInput.trim();
-      if (cmd) {
-        executeTerminalCommand(cmd);
-        state.terminalInput = "";
-        terminalInput.value = "";
-      }
-    }
-  };
-
-  const terminalPanel = el("div", { className: "terminal-panel" },
-    terminalBody,
-    el("div", { className: "terminal-input-row" },
-      el("span", { className: "terminal-prompt" }, "$"),
-      terminalInput,
-      el("button", { className: "btn-send", onClick: () => {
-        const cmd = state.terminalInput.trim();
-        if (cmd) {
-          executeTerminalCommand(cmd);
-          state.terminalInput = "";
-          terminalInput.value = "";
-        }
-      } }, "Execute")
-    )
-  );
+  state.botLogs.forEach(l => {
+    body.appendChild(el("div", { className: "log-line" },
+      el("span", { className: "log-time" }, l.t),
+      el("span", { className: "log-" + l.type }, l.msg)
+    ));
+  });
 
   return el("div", { className: "console-panel discord-console" },
     el("div", { className: "console-toolbar discord-console-toolbar" },
-      el("div", { className: "console-tabs" },
-        el("button", { className: "console-tab" + (state.consoleTab === "output" ? " active" : ""), onClick: () => { state.consoleTab = "output"; render(); } }, "Output"),
-        el("button", { className: "console-tab" + (state.consoleTab === "terminal" ? " active" : ""), onClick: () => { state.consoleTab = "terminal"; render(); } }, "Terminal")
-      ),
+      tabs,
       el("div", { className: "console-controls" },
-        el("button", { className: "btn-clear", onClick: () => {
-          if (state.consoleTab === "output") {
-            state.botLogs = [];
-          } else {
-            state.terminalLogs = [];
-          }
-          render();
-        } }, "Clear")
+        el("button", { className: "btn-clear", onClick: () => { state.botLogs = []; render(); } }, "Clear")
       )
     ),
-    state.consoleTab === "output" ? body : terminalPanel
+    body
   );
+}
+
+function buildTerminalBody() {
+  state.terminalLines = state.terminalLines || [];
+  const body = el("div", { className: "console-body terminal-body" });
+  if (!state.terminalLines.length) {
+    body.appendChild(el("div", { className: "terminal-hint" }, 'Type "help" to see available commands.'));
+  }
+  state.terminalLines.forEach(function(l) {
+    body.appendChild(el("div", { className: "term-line term-" + (l.type || 'out') }, l.text));
+  });
+
+  const input = el("input", {
+    className: "terminal-input",
+    placeholder: "Type a command...",
+    value: state.terminalInputValue || "",
+    oninput: function(e) { state.terminalInputValue = e.target.value; },
+    onkeydown: function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const cmdText = state.terminalInputValue || "";
+        state.terminalInputValue = "";
+        runTerminalCommand(cmdText);
+      }
+    }
+  });
+
+  return el("div", { className: "terminal-wrap" },
+    body,
+    el("div", { className: "terminal-input-row" },
+      el("span", { className: "terminal-prompt" }, "$"),
+      input
+    )
+  );
+}
+
+function runTerminalCommand(raw) {
+  const cmdText = (raw || "").trim();
+  state.terminalLines = state.terminalLines || [];
+  if (!cmdText) { scheduleRender(); return; }
+  state.terminalLines.push({ type: "cmd", text: "$ " + cmdText });
+  if (cmdText.toLowerCase() === "clear") {
+    state.terminalLines = [];
+    scheduleRender();
+    return;
+  }
+  if (!state.currentProject) { scheduleRender(); return; }
+  scheduleRender();
+  fetch("/api/projects/" + state.currentProject.id + "/terminal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command: cmdText })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.streaming) return;
+    if (d.output) {
+      d.output.split("\n").forEach(function(line) {
+        state.terminalLines.push({ type: d.success ? "out" : "err", text: line });
+      });
+    }
+    scheduleRender();
+  }).catch(function() {
+    state.terminalLines.push({ type: "err", text: "Network error." });
+    scheduleRender();
+  });
 }
 
 function walkEntry(entry, path, out) {
@@ -3490,7 +3090,7 @@ function renderChangelogModal() {
   const modal = el("div", { className: "modal changelog-modal" },
     el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" } },
       el("h2", { style: { margin: 0, fontSize: "17px", fontWeight: "800", letterSpacing: "-.02em" } }, "-- Post a changelog"),
-      el("button", { className: "modal-close-btn", onClick: () => { state.showChangelogModal = false; scheduleRender(); } }, "X")
+      el("button", { className: "modal-close-btn", onClick: () => { state.showChangelogModal = false; scheduleRender(); } }, "×")
     ),
     el("div", { className: "form-group" },
       el("label", { className: "form-label" }, "Enter changelog title name:"),
@@ -3574,17 +3174,13 @@ fetch("/api/me").then(r => r.json()).then(d => {
   }
   fetch("/api/projects").then(r => r.json()).then(pd => {
     if (pd && pd.projects) state.projects = pd.projects;
-    bindNotificationGestureAsk();
-    requestNotificationPermission(false);
     checkInbox();
-    startInboxLive();
     checkShareInvites();
     fetchSharedProjects();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         fetchSharedProjects();
         checkShareInvites();
-        checkInbox({ showOverlayOnLoad: false });
       }
     });
     if (window.RebootDevice) {
