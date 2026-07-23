@@ -1362,7 +1362,22 @@ app.post('/api/admin/set-admin', (req, res) => {
   const { username, isAdmin } = req.body;
   const target = db.users.find(x => x.username === username);
   if (target) {
+    const wasAdmin = !!target.admin;
     target.admin = !!isAdmin;
+    if (target.admin && !wasAdmin && !target.staffWelcomeSent) {
+      db.inboxMessages = db.inboxMessages || [];
+      db.inboxMessages.unshift({
+        id: Date.now(),
+        title: 'Staff Team',
+        body: 'Welcome ' + target.username + ' to the staff team!',
+        ts: Date.now(),
+        readBy: [],
+        sender: 'System',
+        rank: 'staff',
+        recipient: target.username
+      });
+      target.staffWelcomeSent = true;
+    }
     saveDB();
   }
   res.json({ success: true });
