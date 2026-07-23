@@ -9,7 +9,9 @@ const MC_VERSIONS = [
 ];
 const BOT_LANGS = ["JavaScript","TypeScript","Python","Lua","Java","Go","Rust","Ruby","C#","PHP","Kotlin","Dart"];
 const MC_SERVER_TYPES = ["Vanilla","Paper","Forge","Fabric","Spigot","Purpur"];
-const MAX_LOGS = 500;
+const MAX_LOGS = 400;
+const EDITOR_HIGHLIGHT_MAX_CHARS = 120000;
+const EDITOR_HIGHLIGHT_MAX_LINES = 4000;
 
 const FONTS = [
   { label: "Default", value: "" },
@@ -157,34 +159,48 @@ function connectWS() {
       if (data.event === 'pong') return;
       if (data.event === 'status') {
         setProjectRunning(data.projectId, !!data.running);
-        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) scheduleRender();
-        else if (state.page === 'projects') scheduleRender();
+        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
+          patchRunningStatus(!!data.running);
+        } else if (state.page === 'projects') {
+          scheduleRender();
+        }
         return;
       }
       if (data.event === 'log') {
         const p = state.projects.find(x => String(x.id) === String(data.projectId)) || state.sharedProjects.find(x => String(x.id) === String(data.projectId));
         if (!p && !(state.currentProject && String(state.currentProject.id) === String(data.projectId))) return;
         const projType = (p && p.type) || (state.currentProject && state.currentProject.type) || 'discord';
-        const tgt = projType === 'minecraft' ? state.mcLogs : state.botLogs;
-        tgt.push({ t: getTime(), type: data.type, msg: data.msg });
+        const isMc = projType === 'minecraft';
+        const tgt = isMc ? state.mcLogs : state.botLogs;
+        const logEntry = { t: getTime(), type: data.type, msg: data.msg };
+        tgt.push(logEntry);
         trimLogs(tgt);
 
+        let needFullRender = false;
         const m1 = data.msg.match(/Missing package: (.+)/);
         if (m1 && m1[1]) {
           const pk = m1[1].trim();
-          if (pk && state.missingPackages.indexOf(pk) === -1) state.missingPackages.push(pk);
+          if (pk && state.missingPackages.indexOf(pk) === -1) {
+            state.missingPackages.push(pk);
+            needFullRender = true;
+          }
         }
         const m2 = data.msg.match(/ModuleNotFoundError: No module named '([^']+)'/);
         if (m2 && m2[1]) {
           const pk = m2[1].trim();
-          if (pk && state.missingPackages.indexOf(pk) === -1) state.missingPackages.push(pk);
+          if (pk && state.missingPackages.indexOf(pk) === -1) {
+            state.missingPackages.push(pk);
+            needFullRender = true;
+          }
         }
 
         if (data.msg && (data.msg.indexOf("Process exited") !== -1 || data.msg.indexOf("forcefully killed") !== -1 || data.msg.indexOf("Process stopped") !== -1 || data.msg.indexOf("stopped manually") !== -1)) {
           setProjectRunning(data.projectId, false);
+          if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) patchRunningStatus(false);
         }
         if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-          scheduleRender();
+          if (needFullRender) scheduleRender();
+          else if (!appendConsoleLogLine(logEntry, isMc)) scheduleRender();
         } else if (state.page === 'projects') {
           scheduleRender();
         }
@@ -272,6 +288,55 @@ function trimLogs(arr) {
   if (arr.length > MAX_LOGS) {
     arr.splice(0, arr.length - MAX_LOGS);
   }
+}
+
+function appendConsoleLogLine(log, isMc) {
+  const sel = isMc ? ".mc-console-body" : ".console-body";
+  const body = document.querySelector(sel);
+  if (!body) return false;
+  const empty = body.querySelector('[data-console-empty="1"]');
+  if (empty) empty.remove();
+  while (body.children.length >= MAX_LOGS) {
+    body.removeChild(body.firstChild);
+  }
+  const row = document.createElement("div");
+  row.className = "log-line";
+  const t = document.createElement("span");
+  t.className = "log-time";
+  t.textContent = log.t;
+  const m = document.createElement("span");
+  m.className = "log-" + (log.type || "info");
+  m.textContent = log.msg;
+  row.appendChild(t);
+  row.appendChild(m);
+  body.appendChild(row);
+  body.scrollTop = body.scrollHeight;
+  return true;
+}
+
+function patchRunningStatus(running) {
+  document.querySelectorAll(".status-chip").forEach(function(chip) {
+    const isDiscord = chip.classList.contains("discord") || chip.closest(".discord-nav");
+    chip.className = "status-chip" + (running ? (isDiscord ? " discord" : "") : " stopped");
+    const dot = chip.querySelector(".status-dot");
+    if (dot) dot.className = "status-dot" + (running ? (isDiscord ? " discord" : "") : " stopped");
+    const textNode = Array.from(chip.childNodes).find(function(n) { return n.nodeType === 3; });
+    if (textNode) textNode.textContent = running ? " Running" : " Stopped";
+    else {
+      const labels = chip.querySelectorAll("span,div");
+    }
+    chip.childNodes.forEach(function(n) {
+      if (n.nodeType === 3) n.textContent = running ? " Running" : " Stopped";
+    });
+  });
+  document.querySelectorAll(".btn-stop-discord,.btn-start-discord,.btn-stop,.btn-start").forEach(function(btn) {
+    const isDiscord = btn.classList.contains("btn-stop-discord") || btn.classList.contains("btn-start-discord");
+    if (running) {
+      btn.className = isDiscord ? "btn-stop-discord" : "btn-stop";
+    } else {
+      btn.className = isDiscord ? "btn-start-discord" : "btn-start";
+    }
+  });
 }
 
 function getTime() {
@@ -755,7 +820,7 @@ function renderInboxNotification() {
     el("div", { className: "inbox-notification-box" },
       el("div", { className: "inbox-notification-header" },
         el("div", { className: "inbox-notification-badge" }, countLabel),
-        el("button", { className: "inbox-notification-close", onClick: () => { state.showInboxNotification = false; scheduleRender(); } }, "×")
+        el("button", { className: "inbox-notification-close", onClick: () => { state.showInboxNotification = false; scheduleRender(); } }, "X")
       ),
       el("div", { className: "inbox-notification-content" },
         el("div", { className: "inbox-notification-title" }, "New inbox message has been added check it out"),
@@ -773,7 +838,7 @@ function renderShareInviteNotification() {
     el("div", { className: "inbox-notification-box" },
       el("div", { className: "inbox-notification-header" },
         el("div", { className: "inbox-notification-badge" }, "shared"),
-        el("button", { className: "inbox-notification-close", onClick: () => { acknowledgeShareInvite(invite); } }, "×")
+        el("button", { className: "inbox-notification-close", onClick: () => { acknowledgeShareInvite(invite); } }, "X")
       ),
       el("div", { className: "inbox-notification-content" },
         el("div", { className: "inbox-notification-title" }, invite.sender + " has shared their " + invite.projectName + " with you!"),
@@ -811,7 +876,7 @@ function renderAIChatUI() {
       state.showFeedbackManagement = false; 
       state.currentFeedbackUser = null; 
       scheduleRender(); 
-    } }, "×")
+    } }, "X")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -892,7 +957,7 @@ function renderFeedbackManagement() {
   
   const header = el("div", { className: "ai-chat-header" },
     el("div", { className: "ai-chat-title" }, svgIcon("ai"), " PrysmisAI Feedback"),
-    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; scheduleRender(); } }, "×")
+    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; scheduleRender(); } }, "X")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -938,7 +1003,7 @@ function renderFeedbackChat(overlay, chatBox) {
   const header = el("div", { className: "ai-chat-header" },
     el("button", { className: "ai-chat-back", onClick: () => { state.currentFeedbackUser = null; scheduleRender(); } }, svgIcon("back")),
     el("div", { className: "ai-chat-title" }, svgIcon("ai"), " PrysmisAI with " + user.username),
-    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; state.currentFeedbackUser = null; scheduleRender(); } }, "×")
+    el("button", { className: "ai-chat-close", onClick: () => { state.showAIChat = false; state.showFeedbackManagement = false; state.currentFeedbackUser = null; scheduleRender(); } }, "X")
   );
   
   const tabs = el("div", { className: "ai-chat-tabs" },
@@ -1080,22 +1145,45 @@ async function sendAIMessage(content) {
   }
 }
 
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function countLinesFast(text) {
+  if (!text) return 1;
+  let n = 1;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) n++;
+  }
+  return n;
+}
+
+function buildLineNumbers(count) {
+  if (count <= 1) return "1";
+  const parts = new Array(count);
+  for (let i = 0; i < count; i++) parts[i] = String(i + 1);
+  return parts.join("\n");
+}
+
 function highlightCode(text, type) {
-  let html = (text || "").replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const raw = text || "";
+  if (raw.length > EDITOR_HIGHLIGHT_MAX_CHARS || countLinesFast(raw) > EDITOR_HIGHLIGHT_MAX_LINES) {
+    return escapeHtml(raw);
+  }
+  let html = escapeHtml(raw);
   const isMc = type === 'minecraft';
   const kwColor = isMc ? '#6dbd3d' : '#7289da';
   const strColor = isMc ? '#a8d5a2' : '#9ece6a';
-  
   const strings = [];
-  html = html.replace(/("[^"]*"|'[^']*'|\`[^`]*\`)/g, (m) => {
+  html = html.replace(/("[^"\n]*"|'[^'\n]*'|`[^`\n]*`)/g, function(m) {
     strings.push('<span style="color:' + strColor + '">' + m + '</span>');
     return '__STR' + (strings.length - 1) + '__';
   });
-  
   html = html.replace(/\b(import|from|const|let|var|function|async|await|return|if|elif|else|for|while|class|require|def|try|except|catch|pass|True|False|None|null|undefined|new|this)\b/g, '<span style="color:' + kwColor + ';font-weight:bold">$1</span>');
-  
-  html = html.replace(/__STR(\d+)__/g, (m, p1) => strings[parseInt(p1, 10)]);
-  
+  html = html.replace(/__STR(\d+)__/g, function(m, p1) { return strings[parseInt(p1, 10)] || m; });
   return html;
 }
 
@@ -2157,21 +2245,35 @@ function renderBotDashboard() {
 
   const ta = el("textarea", { className: "code-editor", spellcheck: "false", wrap: "off" });
   ta.value = state.codeContent || "";
+  ta.setAttribute("autocomplete", "off");
+  ta.setAttribute("autocorrect", "off");
+  ta.setAttribute("autocapitalize", "off");
   
   const hl = el("div", { className: "highlight-layer" });
   
   const lineNums = el("div", { className: "line-numbers" });
   
   let editTimeout;
-  const updateEditor = () => {
-    const count = (state.codeContent.match(/\n/g) || []).length + 1;
-    const arr = [];
-    for(let i=1; i<=count; i++) arr.push(i);
-    lineNums.innerText = arr.join('\n');
-    hl.innerHTML = highlightCode(state.codeContent, p.type);
+  let lastLineCount = -1;
+  let highlightRaf = 0;
+  const updateEditor = (force) => {
+    const text = state.codeContent || "";
+    const count = countLinesFast(text);
+    if (force || count !== lastLineCount) {
+      lineNums.innerText = buildLineNumbers(count);
+      lastLineCount = count;
+    }
+    const large = text.length > EDITOR_HIGHLIGHT_MAX_CHARS || count > EDITOR_HIGHLIGHT_MAX_LINES;
+    if (large) {
+      hl.textContent = text;
+      hl.classList.add("plain");
+    } else {
+      hl.classList.remove("plain");
+      hl.innerHTML = highlightCode(text, p.type);
+    }
   };
   
-  updateEditor();
+  updateEditor(true);
 
   ta.onscroll = () => { 
     lineNums.scrollTop = ta.scrollTop; 
@@ -2180,9 +2282,17 @@ function renderBotDashboard() {
   };
   
   ta.oninput = () => { 
-    state.codeContent = ta.value; 
+    state.codeContent = ta.value;
     clearTimeout(editTimeout);
-    editTimeout = setTimeout(updateEditor, 50);
+    const len = (state.codeContent || "").length;
+    const delay = len > 80000 ? 320 : (len > 25000 ? 160 : 70);
+    editTimeout = setTimeout(function() {
+      if (highlightRaf) cancelAnimationFrame(highlightRaf);
+      highlightRaf = requestAnimationFrame(function() {
+        highlightRaf = 0;
+        updateEditor(false);
+      });
+    }, delay);
   };
 
   const editorWrapper = el("div", { className: "editor-wrapper" }, lineNums, el("div", { className: "code-container" }, hl, ta));
@@ -2224,20 +2334,34 @@ function renderBotDashboard() {
 function buildConsole() {
   const body = el("div", { className: "console-body" });
   if (state.botLogs.length === 0) {
-    body.appendChild(el("div", { style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
+    body.appendChild(el("div", { "data-console-empty": "1", style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
+  } else {
+    const frag = document.createDocumentFragment();
+    const start = Math.max(0, state.botLogs.length - MAX_LOGS);
+    for (let i = start; i < state.botLogs.length; i++) {
+      const l = state.botLogs[i];
+      frag.appendChild(el("div", { className: "log-line" },
+        el("span", { className: "log-time" }, l.t),
+        el("span", { className: "log-" + l.type }, l.msg)
+      ));
+    }
+    body.appendChild(frag);
   }
-  state.botLogs.forEach(l => {
-    body.appendChild(el("div", { className: "log-line" },
-      el("span", { className: "log-time" }, l.t),
-      el("span", { className: "log-" + l.type }, l.msg)
-    ));
-  });
 
   return el("div", { className: "console-panel discord-console" },
     el("div", { className: "console-toolbar discord-console-toolbar" },
       el("span", { className: "console-label" }, "Console"),
       el("div", { className: "console-controls" },
-        el("button", { className: "btn-clear", onClick: () => { state.botLogs = []; render(); } }, "Clear")
+        el("button", { className: "btn-clear", onClick: () => {
+          state.botLogs = [];
+          const b = document.querySelector(".console-body");
+          if (b) {
+            b.innerHTML = "";
+            b.appendChild(el("div", { "data-console-empty": "1", style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
+          } else {
+            render();
+          }
+        } }, "Clear")
       )
     ),
     body
@@ -3300,7 +3424,7 @@ function renderChangelogModal() {
   const modal = el("div", { className: "modal changelog-modal" },
     el("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" } },
       el("h2", { style: { margin: 0, fontSize: "17px", fontWeight: "800", letterSpacing: "-.02em" } }, "-- Post a changelog"),
-      el("button", { className: "modal-close-btn", onClick: () => { state.showChangelogModal = false; scheduleRender(); } }, "×")
+      el("button", { className: "modal-close-btn", onClick: () => { state.showChangelogModal = false; scheduleRender(); } }, "X")
     ),
     el("div", { className: "form-group" },
       el("label", { className: "form-label" }, "Enter changelog title name:"),

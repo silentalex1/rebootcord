@@ -182,7 +182,14 @@ function loadInbox(opts) {
 
       const avatar = document.createElement('div');
       avatar.className = 'inbox-item-avatar' + (isRemoved ? ' removed' : (isNotice ? ' notice' : ''));
-      avatar.textContent = isRemoved ? '×' : (isNotice ? '!' : initials(m.sender));
+      if (isRemoved || isNotice) {
+        const mark = document.createElement('span');
+        mark.className = 'inbox-item-avatar-mark';
+        mark.textContent = isRemoved ? 'X' : '!';
+        avatar.appendChild(mark);
+      } else {
+        avatar.textContent = initials(m.sender);
+      }
 
       const main = document.createElement('div');
       main.className = 'inbox-item-main';

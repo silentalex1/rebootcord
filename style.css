@@ -231,7 +231,11 @@ input,textarea,select{font-family:var(--font)}
 .code-editor { color: transparent; background: transparent; caret-color: #f4f4f4; outline: none; resize: none; z-index: 2; }
 .code-editor::selection { background: #5865f250; color: transparent; }
 .code-editor::-moz-selection { background: #5865f250; color: transparent; }
-.highlight-layer { z-index: 1; color: #c9d1d9; pointer-events: none; user-select: none; }
+.highlight-layer { z-index: 1; color: #c9d1d9; pointer-events: none; user-select: none; will-change: contents; }
+.highlight-layer.plain { white-space: pre; color: #c9d1d9; }
+.code-editor{will-change:scroll-position}
+.line-numbers{will-change:scroll-position}
+.console-body{contain:content}
 
 .editor-toolbar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--surface);flex-wrap:wrap;gap:8px;}
 .discord-toolbar{background:#0d0e1a;border-bottom-color:#5865f218}
