@@ -422,6 +422,26 @@ function broadcastEvent(username, payload) {
   }
 }
 
+function broadcastInboxMessage(msg) {
+  const payload = JSON.stringify({
+    event: 'inboxMessage',
+    ts: Date.now(),
+    message: {
+      id: msg.id,
+      title: msg.title,
+      body: msg.body,
+      sender: msg.sender || null,
+      rank: msg.rank || null,
+      recipient: msg.recipient || null
+    }
+  });
+  for (const client of wsClients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (msg.recipient && client.username !== msg.recipient) continue;
+    try { client.send(payload); } catch (e) {}
+  }
+}
+
 function broadcastProjectStatus(projectId, running) {
   const payload = JSON.stringify({ event: 'status', projectId, running: !!running, ts: Date.now() });
   const audience = projectAudience(projectId);
@@ -630,7 +650,7 @@ app.post('/register', async (req, res) => {
   db.users.push({ username, password: hashedPassword, invite: code, discordUsername: username, projects: [], admin: false });
   delete db.inviteCodes[code];
   db.inboxMessages = db.inboxMessages || [];
-  db.inboxMessages.unshift({
+  const welcomeMsg = {
     id: Date.now(),
     title: 'Welcome to reboot world!',
     body: 'this is a website where you can host your discord bots, and soon own minecraft world. Please follow ALL of the rules from the discord server.',
@@ -641,8 +661,10 @@ app.post('/register', async (req, res) => {
     sender: 'Reboot Cord',
     rank: 'notice',
     recipient: username
-  });
+  };
+  db.inboxMessages.unshift(welcomeMsg);
   saveDB();
+  broadcastInboxMessage(welcomeMsg);
   setCookie(res, signToken(username));
   res.json({ success: true, username });
 });
@@ -806,7 +828,7 @@ app.post('/api/projects/:id/share', (req, res) => {
     seen: false
   });
   db.inboxMessages = db.inboxMessages || [];
-  db.inboxMessages.unshift({
+  const addedMsg = {
     id: Date.now(),
     title: `Added to "${p.name}"`,
     body: `${u} has added you to their ${p.name} project.`,
@@ -815,8 +837,10 @@ app.post('/api/projects/:id/share', (req, res) => {
     sender: u,
     rank: 'notice',
     recipient: targetUser.username
-  });
+  };
+  db.inboxMessages.unshift(addedMsg);
   saveDB();
+  broadcastInboxMessage(addedMsg);
   broadcastEvent(targetUser.username, { event: 'addedToProject', projectId: p.id, projectName: p.name });
   res.json({ success: true, shared: p.shared });
 });
@@ -849,7 +873,7 @@ app.post('/api/projects/:id/unshare', (req, res) => {
   delete unlockedAccess[removedUser + '::' + req.params.id];
   if (wasShared) {
     db.inboxMessages = db.inboxMessages || [];
-    db.inboxMessages.unshift({
+    const removedMsg = {
       id: Date.now(),
       title: `Removed from "${p.name}"`,
       body: `${user.username} has removed you from their project.`,
@@ -858,7 +882,9 @@ app.post('/api/projects/:id/unshare', (req, res) => {
       sender: user.username,
       rank: 'removed',
       recipient: removedUser
-    });
+    };
+    db.inboxMessages.unshift(removedMsg);
+    broadcastInboxMessage(removedMsg);
   }
   saveDB();
   if (wasShared) broadcastEvent(removedUser, { event: 'removedFromProject', projectId: p.id, projectName: p.name });
@@ -974,8 +1000,10 @@ app.post('/api/inbox/send', (req, res) => {
   const body = (req.body.body || '').trim();
   if (!title || !body) return res.json({ success: false });
   db.inboxMessages = db.inboxMessages || [];
-  db.inboxMessages.unshift({ id: Date.now(), title, body, ts: Date.now(), readBy: [] });
+  const adminMsg = { id: Date.now(), title, body, ts: Date.now(), readBy: [], sender: u, rank: 'staff' };
+  db.inboxMessages.unshift(adminMsg);
   saveDB();
+  broadcastInboxMessage(adminMsg);
   res.json({ success: true });
 });
 
@@ -984,8 +1012,10 @@ app.post('/api/inbox/discord', (req, res) => {
   const sender = (req.body.sender || 'Staff').trim();
   if (!message) return res.json({ success: false });
   db.inboxMessages = db.inboxMessages || [];
-  db.inboxMessages.unshift({ id: Date.now(), title: `Message from ${sender}`, body: message, ts: Date.now(), readBy: [], sender, rank: 'staff' });
+  const staffMsg = { id: Date.now(), title: `Message from ${sender}`, body: message, ts: Date.now(), readBy: [], sender, rank: 'staff' };
+  db.inboxMessages.unshift(staffMsg);
   saveDB();
+  broadcastInboxMessage(staffMsg);
   res.json({ success: true });
 });
 
@@ -1524,7 +1554,7 @@ app.post('/api/admin/set-admin', (req, res) => {
     target.admin = !!isAdmin;
     if (target.admin && !wasAdmin && !target.staffWelcomeSent) {
       db.inboxMessages = db.inboxMessages || [];
-      db.inboxMessages.unshift({
+      const staffWelcome = {
         id: Date.now(),
         title: 'Staff Team',
         body: 'Welcome ' + target.username + ' to the staff team!',
@@ -1533,7 +1563,9 @@ app.post('/api/admin/set-admin', (req, res) => {
         sender: 'System',
         rank: 'staff',
         recipient: target.username
-      });
+      };
+      db.inboxMessages.unshift(staffWelcome);
+      broadcastInboxMessage(staffWelcome);
       target.staffWelcomeSent = true;
     }
     saveDB();
@@ -1639,27 +1671,47 @@ function detectDeviceFromUA(uaRaw, hints) {
   let os = 'unknown';
   let browser = 'unknown';
   const touch = !!(hints.touch || (typeof hints.maxTouchPoints === 'number' && hints.maxTouchPoints > 0));
+  const mtp = typeof hints.maxTouchPoints === 'number' ? hints.maxTouchPoints : 0;
   const w = typeof hints.screenWidth === 'number' ? hints.screenWidth : 0;
   const h = typeof hints.screenHeight === 'number' ? hints.screenHeight : 0;
+  const vw = typeof hints.viewportWidth === 'number' ? hints.viewportWidth : 0;
+  const vh = typeof hints.viewportHeight === 'number' ? hints.viewportHeight : 0;
   const minSide = w && h ? Math.min(w, h) : (w || h || 0);
   const maxSide = w && h ? Math.max(w, h) : (w || h || 0);
+  const minViewport = vw && vh ? Math.min(vw, vh) : (vw || vh || 0);
+  const scores = { mobile: 0, tablet: 0, desktop: 0, tv: 0, console: 0, bot: 0 };
 
-  if (/ipad/.test(ua) || (/macintosh/.test(ua) && touch)) type = 'tablet';
-  else if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) type = 'tablet';
-  else if (/android/.test(ua) && /mobile/.test(ua)) type = (minSide && minSide >= 600) ? 'tablet' : 'mobile';
-  else if (/mobi|iphone|ipod|windows phone|blackberry|opera mini|iemobile|fennec/.test(ua)) type = 'mobile';
-  else if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s|crkey|roku/.test(ua)) type = 'tv';
-  else if (/xbox|playstation|nintendo/.test(ua)) type = 'console';
-  else if (/bot|crawl|spider|slurp|bingpreview|headless|googlebot|bingbot|duckduckbot|baiduspider|yandexbot|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot/.test(ua)) type = 'bot';
-  else type = 'desktop';
+  if (/bot|crawl|spider|slurp|bingpreview|headless|googlebot|bingbot|duckduckbot|baiduspider|yandexbot|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot/.test(ua)) scores.bot += 10;
+  if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s|crkey|roku/.test(ua)) scores.tv += 8;
+  if (/xbox|playstation|nintendo/.test(ua)) scores.console += 8;
+  if (/ipad/.test(ua)) scores.tablet += 6;
+  if (/iphone|ipod/.test(ua)) scores.mobile += 6;
+  if (/android/.test(ua) && /mobile/.test(ua)) scores.mobile += 5;
+  if (/android/.test(ua) && !/mobile/.test(ua)) scores.tablet += 5;
+  if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10|sm-t/.test(ua)) scores.tablet += 5;
+  if (/mobi|windows phone|blackberry|opera mini|iemobile|fennec/.test(ua)) scores.mobile += 4;
+  if (/macintosh/.test(ua) && (touch || mtp > 1)) scores.tablet += 5;
+  if (/windows nt|x11|cros|linux/.test(ua) && !touch) scores.desktop += 3;
 
-  if (type === 'desktop' && touch) {
-    if (minSide && minSide < 640) type = 'mobile';
-    else if (minSide && minSide < 1180) type = 'tablet';
-  } else if (type === 'desktop' && minSide) {
-    if (minSide < 640) type = 'mobile';
-    else if (minSide < 900 && maxSide < 1280) type = 'tablet';
+  if (touch || mtp > 0) {
+    if (minSide > 0 && minSide < 600) scores.mobile += 3;
+    else if (minSide >= 600 && minSide < 1100) scores.tablet += 3;
+    else if (minSide >= 1100) scores.desktop += 1;
   }
+  if (minViewport > 0 && minViewport < 480) scores.mobile += 2;
+  if (minViewport >= 700 && minViewport <= 1180 && touch) scores.tablet += 1;
+  if (maxSide >= 1920 && minSide >= 1080 && !touch) scores.desktop += 2;
+
+  let best = -1;
+  for (const k of Object.keys(scores)) {
+    if (scores[k] > best) { best = scores[k]; type = k; }
+  }
+  if (best <= 0) type = 'desktop';
+
+  if (type === 'mobile' && minSide >= 768 && maxSide >= 1024 && !/iphone|ipod|android.*mobile/.test(ua)) type = 'tablet';
+  if (type === 'tablet' && minSide > 0 && minSide < 520 && /iphone|ipod|android.*mobile/.test(ua)) type = 'mobile';
+  if (type === 'desktop' && touch && minSide > 0 && minSide < 640) type = 'mobile';
+  if (type === 'desktop' && touch && minSide >= 640 && minSide < 1180) type = 'tablet';
 
   if (/windows nt/.test(ua)) os = 'windows';
   else if (/mac os x|macintosh/.test(ua)) os = 'macos';
@@ -1667,7 +1719,7 @@ function detectDeviceFromUA(uaRaw, hints) {
   else if (/iphone|ipad|ipod/.test(ua)) os = 'ios';
   else if (/cros/.test(ua)) os = 'chromeos';
   else if (/linux/.test(ua)) os = 'linux';
-  if (os === 'macos' && touch && type !== 'desktop') os = 'ios';
+  if (os === 'macos' && (touch || mtp > 1) && type !== 'desktop') os = 'ios';
 
   if (/edg\//.test(ua)) browser = 'edge';
   else if (/samsungbrowser/.test(ua)) browser = 'samsung';
@@ -1686,7 +1738,9 @@ app.get('/api/v1/device', (req, res) => {
     touch: req.query.touch === '1',
     maxTouchPoints: req.query.mtp ? parseInt(req.query.mtp, 10) : 0,
     screenWidth: req.query.w ? parseInt(req.query.w, 10) : 0,
-    screenHeight: req.query.h ? parseInt(req.query.h, 10) : 0
+    screenHeight: req.query.h ? parseInt(req.query.h, 10) : 0,
+    viewportWidth: req.query.vw ? parseInt(req.query.vw, 10) : 0,
+    viewportHeight: req.query.vh ? parseInt(req.query.vh, 10) : 0
   };
   const info = detectDeviceFromUA(req.headers['user-agent'] || '', hints);
   res.json({ success: true, type: info.type, os: info.os, browser: info.browser });

@@ -104,10 +104,17 @@ const state = {
   needsProjectPassword: false,
   projectUnlockInput: "",
   inboxUnread: false,
+  inboxUnreadCount: 0,
   showInboxNotification: false,
   shareInvites: [],
-  showShareInviteNotification: false
+  showShareInviteNotification: false,
+  knownInboxIds: null,
+  lastInboxNotifyId: null
 };
+
+const BASE_DOC_TITLE = "Reboot Cord";
+const NOTIF_PERM_KEY = "rc_notif_perm_asked";
+const NOTIF_DENIED_KEY = "rc_notif_denied";
 
 let ws;
 let searchTimeout = null;
@@ -201,6 +208,9 @@ function connectWS() {
         fetchSharedProjects();
         checkShareInvites();
       }
+      if (data.event === 'inboxMessage') {
+        checkInbox({ showOverlayOnLoad: false });
+      }
     } catch(err) {}
   };
   ws.onerror = function() {
@@ -255,16 +265,99 @@ function getTime() {
   return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function checkInbox() {
-  fetch('/api/inbox').then(r => r.json()).then(data => {
-    if (data.success && data.messages) {
-      const unread = data.messages.filter(m => !m.read);
-      if (unread.length > 0 && !state.showInboxNotification) {
-        state.inboxUnread = true;
-        state.showInboxNotification = true;
-        scheduleRender();
-      }
+function updateDocumentTitle(count) {
+  const n = Math.max(0, Number(count) || 0);
+  state.inboxUnreadCount = n;
+  state.inboxUnread = n > 0;
+  document.title = n > 0 ? (BASE_DOC_TITLE + " (" + n + ")") : BASE_DOC_TITLE;
+}
+
+function requestNotificationPermission() {
+  if (typeof Notification === "undefined") return Promise.resolve("unsupported");
+  if (Notification.permission === "granted") return Promise.resolve("granted");
+  if (Notification.permission === "denied") {
+    try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); } catch (e) {}
+    return Promise.resolve("denied");
+  }
+  let asked = false;
+  try { asked = localStorage.getItem(NOTIF_PERM_KEY) === "1"; } catch (e) {}
+  if (asked) return Promise.resolve(Notification.permission);
+  try { localStorage.setItem(NOTIF_PERM_KEY, "1"); } catch (e) {}
+  return Notification.requestPermission().then(function(p) {
+    if (p === "denied") {
+      try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); } catch (e) {}
     }
+    return p;
+  }).catch(function() { return "default"; });
+}
+
+function showBrowserInboxNotification(messageText) {
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission !== "granted") return;
+  try {
+    const n = new Notification("New inbox message has been added check it out", {
+      body: String(messageText || "You have a new inbox message."),
+      tag: "rc-inbox",
+      renotify: true,
+      silent: false
+    });
+    n.onclick = function() {
+      try { window.focus(); } catch (e) {}
+      window.location.href = "/inbox";
+      try { n.close(); } catch (e2) {}
+    };
+  } catch (e) {}
+}
+
+function applyInboxState(messages, opts) {
+  opts = opts || {};
+  const list = Array.isArray(messages) ? messages : [];
+  const unread = list.filter(function(m) { return !m.read; });
+  const ids = {};
+  list.forEach(function(m) { ids[String(m.id)] = true; });
+  const prevKnown = state.knownInboxIds;
+  const isFirstLoad = prevKnown === null;
+  const fresh = [];
+  if (!isFirstLoad) {
+    list.forEach(function(m) {
+      if (!prevKnown[String(m.id)]) fresh.push(m);
+    });
+  }
+  state.knownInboxIds = ids;
+  updateDocumentTitle(unread.length);
+
+  if (fresh.length) {
+    const newest = fresh[0];
+    const bodyText = newest.body || newest.title || "You have a new inbox message.";
+    if (String(newest.id) !== String(state.lastInboxNotifyId)) {
+      state.lastInboxNotifyId = newest.id;
+      showBrowserInboxNotification(bodyText);
+      state.showInboxNotification = true;
+      scheduleRender();
+    }
+  } else if (!isFirstLoad && unread.length === 0) {
+    state.showInboxNotification = false;
+  } else if (isFirstLoad && unread.length > 0 && opts.showOverlayOnLoad !== false) {
+    state.showInboxNotification = true;
+    scheduleRender();
+  }
+}
+
+function checkInbox(opts) {
+  return fetch('/api/inbox').then(r => r.json()).then(data => {
+    if (data.success && data.messages) {
+      applyInboxState(data.messages, opts || {});
+    }
+    return data;
+  }).catch(function() { return null; });
+}
+
+function startInboxLive() {
+  if (window.__rcInboxLiveStarted) return;
+  window.__rcInboxLiveStarted = true;
+  setInterval(function() { checkInbox({ showOverlayOnLoad: false }); }, 4000);
+  document.addEventListener("visibilitychange", function() {
+    if (document.visibilityState === "visible") checkInbox({ showOverlayOnLoad: false });
   });
 }
 
@@ -558,14 +651,15 @@ function renderAIChatButton() {
 
 function renderInboxNotification() {
   if (!state.showInboxNotification) return null;
+  const countLabel = state.inboxUnreadCount > 0 ? String(state.inboxUnreadCount) : "unread";
   const overlay = el("div", { className: "inbox-notification-overlay" },
     el("div", { className: "inbox-notification-box" },
       el("div", { className: "inbox-notification-header" },
-        el("div", { className: "inbox-notification-badge" }, "unread"),
+        el("div", { className: "inbox-notification-badge" }, countLabel),
         el("button", { className: "inbox-notification-close", onClick: () => { state.showInboxNotification = false; scheduleRender(); } }, "×")
       ),
       el("div", { className: "inbox-notification-content" },
-        el("div", { className: "inbox-notification-title" }, "New inbox message has been posted!"),
+        el("div", { className: "inbox-notification-title" }, "New inbox message has been added check it out"),
         el("button", { className: "inbox-notification-btn", onClick: () => { window.location.href = "/inbox"; } }, "check it out")
       )
     )
@@ -3191,13 +3285,17 @@ fetch("/api/me").then(r => r.json()).then(d => {
   }
   fetch("/api/projects").then(r => r.json()).then(pd => {
     if (pd && pd.projects) state.projects = pd.projects;
-    checkInbox();
+    requestNotificationPermission().finally(function() {
+      checkInbox();
+      startInboxLive();
+    });
     checkShareInvites();
     fetchSharedProjects();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         fetchSharedProjects();
         checkShareInvites();
+        checkInbox({ showOverlayOnLoad: false });
       }
     });
     if (window.RebootDevice) {

@@ -189,6 +189,24 @@ document.addEventListener('keydown', e => {
     else handleLogin();
   }
 });
+
+(function() {
+  const KEY = 'rc_notif_perm_asked';
+  function ask() {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission !== 'default') return;
+    let asked = false;
+    try { asked = localStorage.getItem(KEY) === '1'; } catch (e) {}
+    if (asked) return;
+    try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    Notification.requestPermission().catch(function() {});
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(ask, 600); }, { once: true });
+  } else {
+    setTimeout(ask, 600);
+  }
+})();
 </script>
 </body>
 </html>

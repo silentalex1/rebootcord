@@ -1,3 +1,7 @@
+const BASE_DOC_TITLE = 'Reboot Cord';
+let knownInboxIds = null;
+let lastNotifyId = null;
+
 function formatDate(ts) {
   const d = new Date(ts);
   const now = new Date();
@@ -11,22 +15,84 @@ function initials(name) {
   return name.trim().slice(0, 2).toUpperCase();
 }
 
-function loadInbox() {
+function updateDocumentTitle(count) {
+  const n = Math.max(0, Number(count) || 0);
+  document.title = n > 0 ? (BASE_DOC_TITLE + ' (' + n + ')') : BASE_DOC_TITLE;
+}
+
+function showBrowserInboxNotification(messageText) {
+  if (typeof Notification === 'undefined') return;
+  if (Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification('New inbox message has been added check it out', {
+      body: String(messageText || 'You have a new inbox message.'),
+      tag: 'rc-inbox',
+      renotify: true
+    });
+    n.onclick = function() {
+      try { window.focus(); } catch (e) {}
+      try { n.close(); } catch (e2) {}
+    };
+  } catch (e) {}
+}
+
+function requestNotificationPermission() {
+  if (typeof Notification === 'undefined') return Promise.resolve('unsupported');
+  if (Notification.permission !== 'default') return Promise.resolve(Notification.permission);
+  let asked = false;
+  try { asked = localStorage.getItem('rc_notif_perm_asked') === '1'; } catch (e) {}
+  if (asked) return Promise.resolve(Notification.permission);
+  try { localStorage.setItem('rc_notif_perm_asked', '1'); } catch (e) {}
+  return Notification.requestPermission().catch(function() { return 'default'; });
+}
+
+function countUnread(messages) {
+  return (messages || []).filter(function(m) { return !m.read; }).length;
+}
+
+function trackNewMessages(messages) {
+  const list = messages || [];
+  const ids = {};
+  list.forEach(function(m) { ids[String(m.id)] = true; });
+  const isFirst = knownInboxIds === null;
+  const fresh = [];
+  if (!isFirst) {
+    list.forEach(function(m) {
+      if (!knownInboxIds[String(m.id)]) fresh.push(m);
+    });
+  }
+  knownInboxIds = ids;
+  if (fresh.length) {
+    const newest = fresh[0];
+    if (String(newest.id) !== String(lastNotifyId)) {
+      lastNotifyId = newest.id;
+      showBrowserInboxNotification(newest.body || newest.title || 'You have a new inbox message.');
+    }
+  }
+  updateDocumentTitle(countUnread(list));
+}
+
+function loadInbox(opts) {
+  opts = opts || {};
   Promise.all([
     fetch('/api/inbox').then(r => r.json()),
     fetch('/api/me').then(r => r.json()).catch(() => ({ isAdmin: false }))
   ]).then(([data, me]) => {
     const isAdmin = !!(me && me.isAdmin);
     const list = document.getElementById('inboxList');
+    if (!list) return;
+    const messages = (data.success && data.messages) ? data.messages : [];
+    trackNewMessages(messages);
+    if (opts.silent) return;
     list.innerHTML = '';
-    if (!data.success || !data.messages || !data.messages.length) {
+    if (!messages.length) {
       const empty = document.createElement('div');
       empty.className = 'inbox-empty';
       empty.textContent = 'No messages yet.';
       list.appendChild(empty);
       return;
     }
-    data.messages.forEach(m => {
+    messages.forEach(m => {
       const titleText = String(m.title || '');
       const isRemoved = m.rank === 'removed' || /^Removed from\b/i.test(titleText) || /has removed you from their project/i.test(String(m.body || ''));
       const isNotice = !isRemoved && m.rank === 'notice';
@@ -115,6 +181,7 @@ function loadInbox() {
                 empty.textContent = 'No messages yet.';
                 list.appendChild(empty);
               }
+              loadInbox({ silent: true });
             }
           });
         };
@@ -132,6 +199,7 @@ function loadInbox() {
             item.classList.remove('unread');
             const badge = item.querySelector('.inbox-unread-badge');
             if (badge) badge.remove();
+            updateDocumentTitle(countUnread(messages));
           });
         }
       };
@@ -140,4 +208,22 @@ function loadInbox() {
   });
 }
 
-loadInbox();
+requestNotificationPermission().finally(function() {
+  loadInbox();
+});
+
+setInterval(function() {
+  fetch('/api/inbox').then(function(r) { return r.json(); }).then(function(data) {
+    if (!data.success || !data.messages) return;
+    const prev = knownInboxIds ? Object.keys(knownInboxIds).length : 0;
+    const beforeUnread = document.title.match(/\((\d+)\)/);
+    trackNewMessages(data.messages);
+    const after = Object.keys(knownInboxIds || {}).length;
+    const unreadNow = countUnread(data.messages);
+    const unreadBefore = beforeUnread ? parseInt(beforeUnread[1], 10) : 0;
+    if (after !== prev || unreadNow !== unreadBefore) loadInbox();
+  }).catch(function() {});
+}, 5000);
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible') loadInbox();
+});
