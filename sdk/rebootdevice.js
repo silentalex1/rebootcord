@@ -74,7 +74,7 @@
       type = 'tv';
     } else if (/xbox|playstation|nintendo/.test(ua)) {
       type = 'console';
-    } else if (/bot|crawl|spider|slurp|bingpreview|headless/.test(ua)) {
+    } else if (/bot|crawl|spider|slurp|bingpreview|headless|googlebot|bingbot|duckduckbot|baiduspider|yandexbot|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot|ahrefsbot|semrushbot|mj12bot|pingdom|uptimerobot|linkedinbot|embedly|quora link preview|vkshare|w3c_validator/.test(ua)) {
       type = 'bot';
     } else {
       type = 'desktop';
@@ -104,15 +104,21 @@
     }
     if (os === 'macos' && (touch || coarsePointer) && type !== 'desktop') os = 'ios';
 
+    var brandNames = [];
+    if (uaData && Array.isArray(uaData.brands)) {
+      brandNames = uaData.brands.map(function(b) { return (b.brand || '').toLowerCase(); });
+    }
+    function hasBrand(name) { return brandNames.some(function(b) { return b.indexOf(name) !== -1; }); }
+
     var browser = 'unknown';
-    if (/edg\//.test(ua)) browser = 'edge';
+    if (hasBrand('microsoft edge') || /edg\//.test(ua)) browser = 'edge';
     else if (/samsungbrowser/.test(ua)) browser = 'samsung';
     else if (/ucbrowser/.test(ua)) browser = 'uc';
-    else if (/brave\//.test(ua)) browser = 'brave';
-    else if (/vivaldi/.test(ua)) browser = 'vivaldi';
-    else if (/opr\/|opera/.test(ua)) browser = 'opera';
+    else if (hasBrand('brave') || /brave\//.test(ua)) browser = 'brave';
+    else if (hasBrand('vivaldi') || /vivaldi/.test(ua)) browser = 'vivaldi';
+    else if (hasBrand('opera') || /opr\/|opera/.test(ua)) browser = 'opera';
     else if (/crios/.test(ua)) browser = 'chrome';
-    else if (/chrome\//.test(ua)) browser = 'chrome';
+    else if (hasBrand('google chrome') || hasBrand('chromium') || /chrome\//.test(ua)) browser = 'chrome';
     else if (/fxios|firefox/.test(ua)) browser = 'firefox';
     else if (/safari/.test(ua)) browser = 'safari';
 
