@@ -909,9 +909,9 @@ app.post('/api/blacklist', (req, res) => {
 app.get('/api/projects/:id/detect-deps', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false, packages: [] });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false, packages: [] });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !access.hasAccess) return res.json({ success: false, packages: [] });
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   let packages = [];
   try {
@@ -923,9 +923,9 @@ app.get('/api/projects/:id/detect-deps', (req, res) => {
 app.get('/api/projects/:id/deps-status', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  const p = user && user.projects.find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !access.hasAccess) return res.json({ success: false });
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   let packages = [];
   try { packages = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) {}
@@ -1031,9 +1031,9 @@ app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
 app.post('/api/projects/:id/deleteFile', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (p && req.body.name) {
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (p && canEditFiles(access) && req.body.name) {
     const safe = safeJoin(path.join(PROJECTS_DIR, String(p.id)), req.body.name);
     if (!safe) return res.json({ success: false });
     try {
@@ -1049,9 +1049,9 @@ app.post('/api/projects/:id/deleteFile', (req, res) => {
 app.post('/api/projects/:id/touch', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (p && req.body.name) {
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (p && canEditFiles(access) && req.body.name) {
     const pDir = path.join(PROJECTS_DIR, String(p.id));
     const safe = safeJoin(pDir, req.body.name);
     if (!safe) return res.json({ success: false });
@@ -1066,9 +1066,9 @@ app.post('/api/projects/:id/touch', (req, res) => {
 app.post('/api/projects/:id/mkdir', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (p && req.body.name) {
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (p && canEditFiles(access) && req.body.name) {
     const pDir = path.join(PROJECTS_DIR, String(p.id));
     const safe = safeJoin(pDir, req.body.name);
     if (!safe) return res.json({ success: false });
@@ -1081,9 +1081,9 @@ app.post('/api/projects/:id/mkdir', (req, res) => {
 app.post('/api/projects/:id/backup', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canControl(access)) return res.json({ success: false });
   const ts = Date.now();
   const bname = 'backup_' + ts;
   p._mcBackups = p._mcBackups || [];
@@ -1104,9 +1104,9 @@ app.post('/api/projects/:id/backup', (req, res) => {
 app.post('/api/projects/:id/revert', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  const p = user.projects.find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canControl(access)) return res.json({ success: false });
   const bname = req.body.dir;
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   const wDir = path.join(pDir, 'world');
