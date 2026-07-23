@@ -192,19 +192,86 @@ document.addEventListener('keydown', e => {
 
 (function() {
   const KEY = 'rc_notif_perm_asked';
-  function ask() {
+  function ensureStyles() {
+    if (document.getElementById('rc-notif-prompt-style')) return;
+    const s = document.createElement('style');
+    s.id = 'rc-notif-prompt-style';
+    s.textContent = '.rc-notif-prompt{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:99999;display:flex;align-items:center;gap:12px;max-width:min(520px,92vw);padding:12px 14px;border-radius:12px;background:#121212;border:1px solid #2d2d2d;box-shadow:0 12px 40px rgba(0,0,0,.45);font-family:Syne,sans-serif;color:#e8e8ec}.rc-notif-prompt-text{font-size:13px;line-height:1.4;flex:1}.rc-notif-prompt-actions{display:flex;gap:8px}.rc-notif-prompt-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer}.rc-notif-prompt-btn.primary{background:#e63946;color:#fff}.rc-notif-prompt-btn.ghost{background:#1e1e1e;color:#9a9aa2;border:1px solid #2d2d2d}';
+    document.head.appendChild(s);
+  }
+  function hidePrompt() {
+    const el = document.getElementById('rc-notif-prompt');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+  function showPrompt() {
     if (typeof Notification === 'undefined') return;
-    if (Notification.permission !== 'default') {
-      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    if (Notification.permission !== 'default') return;
+    if (document.getElementById('rc-notif-prompt')) return;
+    let status = '';
+    try { status = localStorage.getItem(KEY) || ''; } catch (e) {}
+    if (status === 'dismissed' || status === 'denied' || status === 'granted') return;
+    ensureStyles();
+    const box = document.createElement('div');
+    box.id = 'rc-notif-prompt';
+    box.className = 'rc-notif-prompt';
+    const text = document.createElement('div');
+    text.className = 'rc-notif-prompt-text';
+    text.textContent = 'Allow notifications so you get alerted for new inbox messages.';
+    const actions = document.createElement('div');
+    actions.className = 'rc-notif-prompt-actions';
+    const allow = document.createElement('button');
+    allow.className = 'rc-notif-prompt-btn primary';
+    allow.type = 'button';
+    allow.textContent = 'Allow';
+    const later = document.createElement('button');
+    later.className = 'rc-notif-prompt-btn ghost';
+    later.type = 'button';
+    later.textContent = 'Not now';
+    allow.onclick = function() {
+      hidePrompt();
+      Notification.requestPermission().then(function(p) {
+        try { localStorage.setItem(KEY, p || 'default'); } catch (e) {}
+      }).catch(function() {});
+    };
+    later.onclick = function() {
+      try { localStorage.setItem(KEY, 'dismissed'); } catch (e) {}
+      hidePrompt();
+    };
+    actions.appendChild(later);
+    actions.appendChild(allow);
+    box.appendChild(text);
+    box.appendChild(actions);
+    document.body.appendChild(box);
+  }
+  function bindGesture() {
+    const tryAsk = function() {
+      if (typeof Notification === 'undefined') return;
+      if (Notification.permission !== 'default') return;
+      let status = '';
+      try { status = localStorage.getItem(KEY) || ''; } catch (e) {}
+      if (status === 'dismissed' || status === 'denied') return;
+      Notification.requestPermission().then(function(p) {
+        try { localStorage.setItem(KEY, p || 'default'); } catch (e) {}
+        if (p === 'granted' || p === 'denied') hidePrompt();
+      }).catch(function() {});
+    };
+    ['pointerdown', 'click', 'keydown', 'touchstart'].forEach(function(ev) {
+      document.addEventListener(ev, tryAsk, { once: true, capture: true, passive: true });
+    });
+  }
+  function boot() {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission === 'granted' || Notification.permission === 'denied') {
+      try { localStorage.setItem(KEY, Notification.permission); } catch (e) {}
       return;
     }
-    try { localStorage.setItem(KEY, '1'); } catch (e) {}
-    Notification.requestPermission().catch(function() {});
+    showPrompt();
+    bindGesture();
   }
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { setTimeout(ask, 600); }, { once: true });
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(boot, 400); }, { once: true });
   } else {
-    setTimeout(ask, 600);
+    setTimeout(boot, 400);
   }
 })();
 </script>

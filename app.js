@@ -210,14 +210,17 @@ function connectWS() {
       }
       if (data.event === 'inboxMessage') {
         const msg = data.message || {};
-        if (msg.id && state.knownInboxIds && !state.knownInboxIds[String(msg.id)]) {
-          state.knownInboxIds[String(msg.id)] = true;
-          state.lastInboxNotifyId = msg.id;
-          state.inboxUnreadCount = (state.inboxUnreadCount || 0) + 1;
-          updateDocumentTitle(state.inboxUnreadCount);
-          showBrowserInboxNotification(msg.body || msg.title || "You have a new inbox message.", msg.id);
-          state.showInboxNotification = true;
-          scheduleRender();
+        if (msg.id) {
+          if (!state.knownInboxIds) state.knownInboxIds = {};
+          if (!state.knownInboxIds[String(msg.id)]) {
+            state.knownInboxIds[String(msg.id)] = true;
+            state.lastInboxNotifyId = msg.id;
+            state.inboxUnreadCount = (state.inboxUnreadCount || 0) + 1;
+            updateDocumentTitle(state.inboxUnreadCount);
+            showBrowserInboxNotification(msg.body || msg.title || "You have a new inbox message.", msg.id);
+            state.showInboxNotification = true;
+            scheduleRender();
+          }
         }
         checkInbox({ showOverlayOnLoad: false });
       }
@@ -279,31 +282,115 @@ function updateDocumentTitle(count) {
   const n = Math.max(0, Number(count) || 0);
   state.inboxUnreadCount = n;
   state.inboxUnread = n > 0;
-  document.title = n > 0 ? (BASE_DOC_TITLE + " (" + n + ")") : BASE_DOC_TITLE;
+  const next = n > 0 ? (BASE_DOC_TITLE + " (" + n + ")") : BASE_DOC_TITLE;
+  if (document.title !== next) document.title = next;
+  try {
+    if (n > 0) document.documentElement.setAttribute("data-inbox-unread", String(n));
+    else document.documentElement.removeAttribute("data-inbox-unread");
+  } catch (e) {}
 }
 
-function requestNotificationPermission() {
+function ensureNotifPromptStyles() {
+  if (document.getElementById("rc-notif-prompt-style")) return;
+  const style = document.createElement("style");
+  style.id = "rc-notif-prompt-style";
+  style.textContent = ".rc-notif-prompt{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147483001;display:flex;align-items:center;gap:12px;max-width:min(520px,92vw);padding:12px 14px;border-radius:12px;background:#121212;border:1px solid #2d2d2d;box-shadow:0 12px 40px rgba(0,0,0,.45);font-family:var(--font),sans-serif;color:#e8e8ec}.rc-notif-prompt-text{font-size:13px;line-height:1.4;flex:1}.rc-notif-prompt-actions{display:flex;gap:8px;flex-shrink:0}.rc-notif-prompt-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer}.rc-notif-prompt-btn.primary{background:#e63946;color:#fff}.rc-notif-prompt-btn.ghost{background:#1e1e1e;color:#9a9aa2;border:1px solid #2d2d2d}";
+  document.head.appendChild(style);
+}
+
+function hideNotifPrompt() {
+  const el = document.getElementById("rc-notif-prompt");
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+
+function showNotifPermissionPrompt() {
+  if (typeof Notification === "undefined") return;
+  if (Notification.permission !== "default") return;
+  if (document.getElementById("rc-notif-prompt")) return;
+  ensureNotifPromptStyles();
+  const box = document.createElement("div");
+  box.id = "rc-notif-prompt";
+  box.className = "rc-notif-prompt";
+  const text = document.createElement("div");
+  text.className = "rc-notif-prompt-text";
+  text.textContent = "Allow notifications so you get alerted for new inbox messages.";
+  const actions = document.createElement("div");
+  actions.className = "rc-notif-prompt-actions";
+  const allow = document.createElement("button");
+  allow.className = "rc-notif-prompt-btn primary";
+  allow.type = "button";
+  allow.textContent = "Allow";
+  const later = document.createElement("button");
+  later.className = "rc-notif-prompt-btn ghost";
+  later.type = "button";
+  later.textContent = "Not now";
+  allow.onclick = function() {
+    hideNotifPrompt();
+    requestNotificationPermission(true);
+  };
+  later.onclick = function() {
+    try { localStorage.setItem(NOTIF_PERM_KEY, "dismissed"); } catch (e) {}
+    hideNotifPrompt();
+  };
+  actions.appendChild(later);
+  actions.appendChild(allow);
+  box.appendChild(text);
+  box.appendChild(actions);
+  document.body.appendChild(box);
+}
+
+function requestNotificationPermission(force) {
   if (typeof Notification === "undefined") return Promise.resolve("unsupported");
   if (Notification.permission === "granted") {
-    try { localStorage.setItem(NOTIF_PERM_KEY, "1"); } catch (e) {}
+    try { localStorage.setItem(NOTIF_PERM_KEY, "granted"); } catch (e) {}
+    hideNotifPrompt();
     return Promise.resolve("granted");
   }
   if (Notification.permission === "denied") {
-    try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); localStorage.setItem(NOTIF_PERM_KEY, "1"); } catch (e) {}
+    try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); localStorage.setItem(NOTIF_PERM_KEY, "denied"); } catch (e) {}
+    hideNotifPrompt();
     return Promise.resolve("denied");
   }
-  try { localStorage.setItem(NOTIF_PERM_KEY, "1"); } catch (e) {}
+  if (!force) {
+    let status = "";
+    try { status = localStorage.getItem(NOTIF_PERM_KEY) || ""; } catch (e) {}
+    if (status === "dismissed") return Promise.resolve("default");
+    if (document.body) showNotifPermissionPrompt();
+    else document.addEventListener("DOMContentLoaded", showNotifPermissionPrompt, { once: true });
+    return Promise.resolve("default");
+  }
   return Notification.requestPermission().then(function(p) {
+    try { localStorage.setItem(NOTIF_PERM_KEY, p || "default"); } catch (e) {}
     if (p === "denied") {
       try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); } catch (e) {}
     }
+    if (p === "granted") hideNotifPrompt();
     return p;
   }).catch(function() { return "default"; });
 }
 
+function bindNotificationGestureAsk() {
+  if (window.__rcNotifGestureBound) return;
+  window.__rcNotifGestureBound = true;
+  const tryAsk = function() {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission !== "default") return;
+    let status = "";
+    try { status = localStorage.getItem(NOTIF_PERM_KEY) || ""; } catch (e) {}
+    if (status === "dismissed" || status === "denied") return;
+    requestNotificationPermission(true);
+  };
+  ["pointerdown", "click", "keydown", "touchstart"].forEach(function(ev) {
+    document.addEventListener(ev, tryAsk, { once: true, capture: true, passive: true });
+  });
+}
+
 function showBrowserInboxNotification(messageText, messageId) {
   if (typeof Notification === "undefined") return;
-  if (Notification.permission !== "granted") return;
+  if (Notification.permission !== "granted") {
+    if (Notification.permission === "default") showNotifPermissionPrompt();
+    return;
+  }
   try {
     const n = new Notification("New inbox message has been added check it out", {
       body: String(messageText || "You have a new inbox message."),
@@ -316,6 +403,7 @@ function showBrowserInboxNotification(messageText, messageId) {
       window.location.href = "/inbox";
       try { n.close(); } catch (e2) {}
     };
+    setTimeout(function() { try { n.close(); } catch (e3) {} }, 12000);
   } catch (e) {}
 }
 
@@ -353,8 +441,8 @@ function applyInboxState(messages, opts) {
 }
 
 function checkInbox(opts) {
-  return fetch('/api/inbox').then(r => r.json()).then(data => {
-    if (data.success && data.messages) {
+  return fetch('/api/inbox', { cache: "no-store" }).then(r => r.json()).then(data => {
+    if (data && data.success && data.messages) {
       applyInboxState(data.messages, opts || {});
     }
     return data;
@@ -364,10 +452,12 @@ function checkInbox(opts) {
 function startInboxLive() {
   if (window.__rcInboxLiveStarted) return;
   window.__rcInboxLiveStarted = true;
-  setInterval(function() { checkInbox({ showOverlayOnLoad: false }); }, 4000);
+  setInterval(function() { checkInbox({ showOverlayOnLoad: false }); }, 2000);
   document.addEventListener("visibilitychange", function() {
     if (document.visibilityState === "visible") checkInbox({ showOverlayOnLoad: false });
   });
+  window.addEventListener("focus", function() { checkInbox({ showOverlayOnLoad: false }); });
+  window.addEventListener("pageshow", function() { checkInbox({ showOverlayOnLoad: false }); });
 }
 
 function fetchSharedProjects() {
@@ -3294,10 +3384,10 @@ fetch("/api/me").then(r => r.json()).then(d => {
   }
   fetch("/api/projects").then(r => r.json()).then(pd => {
     if (pd && pd.projects) state.projects = pd.projects;
-    requestNotificationPermission().finally(function() {
-      checkInbox();
-      startInboxLive();
-    });
+    bindNotificationGestureAsk();
+    requestNotificationPermission(false);
+    checkInbox();
+    startInboxLive();
     checkShareInvites();
     fetchSharedProjects();
     document.addEventListener('visibilitychange', () => {

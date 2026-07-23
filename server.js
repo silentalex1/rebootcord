@@ -817,6 +817,10 @@ app.post('/api/projects/:id/share', (req, res) => {
   p.shared = p.shared || [];
   if (p.shared.find(x => x.username === targetUser.username)) return res.json({ success: false, message: 'Already shared with that user.' });
   p.shared.push({ username: targetUser.username, perms: { editFiles: false, changeName: false, fullAccess: false } });
+  p.shareAddCounts = p.shareAddCounts || {};
+  const addKey = targetUser.username.toLowerCase();
+  p.shareAddCounts[addKey] = (Number(p.shareAddCounts[addKey]) || 0) + 1;
+  const addCount = p.shareAddCounts[addKey];
   db.shareInvites = db.shareInvites || [];
   db.shareInvites.push({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
@@ -828,15 +832,20 @@ app.post('/api/projects/:id/share', (req, res) => {
     seen: false
   });
   db.inboxMessages = db.inboxMessages || [];
+  let addBody = `${u} has added you to their ${p.name} project.`;
+  if (addCount >= 2) {
+    addBody = `${u} has added you to their ${p.name} project once again. (${addCount}x)`;
+  }
   const addedMsg = {
     id: Date.now(),
     title: `Added to "${p.name}"`,
-    body: `${u} has added you to their ${p.name} project.`,
+    body: addBody,
     ts: Date.now(),
     readBy: [],
     sender: u,
     rank: 'notice',
-    recipient: targetUser.username
+    recipient: targetUser.username,
+    addCount: addCount
   };
   db.inboxMessages.unshift(addedMsg);
   saveDB();

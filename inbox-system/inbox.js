@@ -17,12 +17,68 @@ function initials(name) {
 
 function updateDocumentTitle(count) {
   const n = Math.max(0, Number(count) || 0);
-  document.title = n > 0 ? (BASE_DOC_TITLE + ' (' + n + ')') : BASE_DOC_TITLE;
+  const next = n > 0 ? (BASE_DOC_TITLE + ' (' + n + ')') : BASE_DOC_TITLE;
+  if (document.title !== next) document.title = next;
+}
+
+function ensureNotifPromptStyles() {
+  if (document.getElementById('rc-notif-prompt-style')) return;
+  const style = document.createElement('style');
+  style.id = 'rc-notif-prompt-style';
+  style.textContent = '.rc-notif-prompt{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147483001;display:flex;align-items:center;gap:12px;max-width:min(520px,92vw);padding:12px 14px;border-radius:12px;background:#121212;border:1px solid #2d2d2d;box-shadow:0 12px 40px rgba(0,0,0,.45);font-family:var(--font),sans-serif;color:#e8e8ec}.rc-notif-prompt-text{font-size:13px;line-height:1.4;flex:1}.rc-notif-prompt-actions{display:flex;gap:8px;flex-shrink:0}.rc-notif-prompt-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer}.rc-notif-prompt-btn.primary{background:#e63946;color:#fff}.rc-notif-prompt-btn.ghost{background:#1e1e1e;color:#9a9aa2;border:1px solid #2d2d2d}';
+  document.head.appendChild(style);
+}
+
+function hideNotifPrompt() {
+  const el = document.getElementById('rc-notif-prompt');
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+}
+
+function showNotifPermissionPrompt() {
+  if (typeof Notification === 'undefined') return;
+  if (Notification.permission !== 'default') return;
+  if (document.getElementById('rc-notif-prompt')) return;
+  let status = '';
+  try { status = localStorage.getItem('rc_notif_perm_asked') || ''; } catch (e) {}
+  if (status === 'dismissed' || status === 'denied' || status === 'granted') return;
+  ensureNotifPromptStyles();
+  const box = document.createElement('div');
+  box.id = 'rc-notif-prompt';
+  box.className = 'rc-notif-prompt';
+  const text = document.createElement('div');
+  text.className = 'rc-notif-prompt-text';
+  text.textContent = 'Allow notifications so you get alerted for new inbox messages.';
+  const actions = document.createElement('div');
+  actions.className = 'rc-notif-prompt-actions';
+  const allow = document.createElement('button');
+  allow.className = 'rc-notif-prompt-btn primary';
+  allow.type = 'button';
+  allow.textContent = 'Allow';
+  const later = document.createElement('button');
+  later.className = 'rc-notif-prompt-btn ghost';
+  later.type = 'button';
+  later.textContent = 'Not now';
+  allow.onclick = function() {
+    hideNotifPrompt();
+    requestNotificationPermission(true);
+  };
+  later.onclick = function() {
+    try { localStorage.setItem('rc_notif_perm_asked', 'dismissed'); } catch (e) {}
+    hideNotifPrompt();
+  };
+  actions.appendChild(later);
+  actions.appendChild(allow);
+  box.appendChild(text);
+  box.appendChild(actions);
+  document.body.appendChild(box);
 }
 
 function showBrowserInboxNotification(messageText, messageId) {
   if (typeof Notification === 'undefined') return;
-  if (Notification.permission !== 'granted') return;
+  if (Notification.permission !== 'granted') {
+    if (Notification.permission === 'default') showNotifPermissionPrompt();
+    return;
+  }
   try {
     const n = new Notification('New inbox message has been added check it out', {
       body: String(messageText || 'You have a new inbox message.'),
@@ -33,17 +89,42 @@ function showBrowserInboxNotification(messageText, messageId) {
       try { window.focus(); } catch (e) {}
       try { n.close(); } catch (e2) {}
     };
+    setTimeout(function() { try { n.close(); } catch (e3) {} }, 12000);
   } catch (e) {}
 }
 
-function requestNotificationPermission() {
+function requestNotificationPermission(force) {
   if (typeof Notification === 'undefined') return Promise.resolve('unsupported');
   if (Notification.permission === 'granted' || Notification.permission === 'denied') {
-    try { localStorage.setItem('rc_notif_perm_asked', '1'); } catch (e) {}
+    try { localStorage.setItem('rc_notif_perm_asked', Notification.permission); } catch (e) {}
+    hideNotifPrompt();
     return Promise.resolve(Notification.permission);
   }
-  try { localStorage.setItem('rc_notif_perm_asked', '1'); } catch (e) {}
-  return Notification.requestPermission().catch(function() { return 'default'; });
+  if (!force) {
+    showNotifPermissionPrompt();
+    return Promise.resolve('default');
+  }
+  return Notification.requestPermission().then(function(p) {
+    try { localStorage.setItem('rc_notif_perm_asked', p || 'default'); } catch (e) {}
+    if (p === 'granted') hideNotifPrompt();
+    return p;
+  }).catch(function() { return 'default'; });
+}
+
+function bindNotificationGestureAsk() {
+  if (window.__rcNotifGestureBound) return;
+  window.__rcNotifGestureBound = true;
+  const tryAsk = function() {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission !== 'default') return;
+    let status = '';
+    try { status = localStorage.getItem('rc_notif_perm_asked') || ''; } catch (e) {}
+    if (status === 'dismissed' || status === 'denied') return;
+    requestNotificationPermission(true);
+  };
+  ['pointerdown', 'click', 'keydown', 'touchstart'].forEach(function(ev) {
+    document.addEventListener(ev, tryAsk, { once: true, capture: true, passive: true });
+  });
 }
 
 function countUnread(messages) {
@@ -75,7 +156,7 @@ function trackNewMessages(messages) {
 function loadInbox(opts) {
   opts = opts || {};
   Promise.all([
-    fetch('/api/inbox').then(r => r.json()),
+    fetch('/api/inbox', { cache: 'no-store' }).then(r => r.json()),
     fetch('/api/me').then(r => r.json()).catch(() => ({ isAdmin: false }))
   ]).then(([data, me]) => {
     const isAdmin = !!(me && me.isAdmin);
@@ -208,12 +289,12 @@ function loadInbox(opts) {
   });
 }
 
-requestNotificationPermission().finally(function() {
-  loadInbox();
-});
+bindNotificationGestureAsk();
+requestNotificationPermission(false);
+loadInbox();
 
 setInterval(function() {
-  fetch('/api/inbox').then(function(r) { return r.json(); }).then(function(data) {
+  fetch('/api/inbox', { cache: 'no-store' }).then(function(r) { return r.json(); }).then(function(data) {
     if (!data.success || !data.messages) return;
     const prev = knownInboxIds ? Object.keys(knownInboxIds).length : 0;
     const beforeUnread = document.title.match(/\((\d+)\)/);
@@ -223,7 +304,9 @@ setInterval(function() {
     const unreadBefore = beforeUnread ? parseInt(beforeUnread[1], 10) : 0;
     if (after !== prev || unreadNow !== unreadBefore) loadInbox();
   }).catch(function() {});
-}, 5000);
+}, 2000);
+
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'visible') loadInbox();
 });
+window.addEventListener('focus', function() { loadInbox({ silent: true }); });
