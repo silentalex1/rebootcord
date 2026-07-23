@@ -166,30 +166,43 @@ const PY_STDLIB = new Set(["os","sys","json","time","random","re","math","dateti
 const NODE_BUILTIN = new Set(["fs","path","http","https","crypto","os","util","child_process","events","stream","net","dgram","dns","url","zlib","querystring","assert","buffer","console","constants","domain","punycode","readline","repl","string_decoder","timers","tls","tty","vm","worker_threads","perf_hooks","async_hooks","trace_events","inspector","wasi","diagnostics_channel"]);
 
 function detectPyDeps(code, set) {
-  const re = /(?:^|[\n;])\s*(?:import\s+([a-zA-Z0-9_.]+)|from\s+([a-zA-Z0-9_.]+)\s+import)/gm;
-  let m;
-  while ((m = re.exec(code))) {
-    let pkg = (m[1] || m[2] || '').split('.')[0].toLowerCase().trim();
-    if (pkg && !PY_STDLIB.has(pkg)) {
-      set.add(pkg === 'discord' ? 'discord.py' : pkg);
+  const patterns = [
+    /(?:^|[\n;])\s*(?:import\s+([a-zA-Z0-9_.]+)|from\s+([a-zA-Z0-9_.]+)\s+import)/gm,
+    /(?:^|[\n;])\s*import\s+([a-zA-Z0-9_,\s]+)/gm,
+    /(?:^|[\n;])\s*from\s+([a-zA-Z0-9_.]+)\s+import/gm
+  ];
+  patterns.forEach((re) => {
+    let m;
+    while ((m = re.exec(code))) {
+      let pkg = (m[1] || m[2] || '').split('.')[0].toLowerCase().trim();
+      if (pkg && !PY_STDLIB.has(pkg) && pkg.length > 1 && /^[a-z][a-z0-9_]*$/.test(pkg)) {
+        set.add(pkg === 'discord' ? 'discord.py' : pkg);
+      }
     }
-  }
+  });
 }
 
 function detectJsDeps(code, set) {
-  const re = /(?:require\(['"]([^'"]+)['"]\)|from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"])/g;
-  let m;
-  while ((m = re.exec(code))) {
-    let pkg = (m[1] || m[2] || m[3] || '').split('/')[0].trim();
-    if (pkg && !NODE_BUILTIN.has(pkg) && !pkg.startsWith('.') && !pkg.startsWith('@/')) {
-      set.add(pkg === 'discord' ? 'discord.js' : pkg);
+  const patterns = [
+    /require\(['"]([^'"]+)['"]\)/g,
+    /from\s+['"]([^'"]+)['"]\s+import/g,
+    /import\s+['"]([^'"]+)['"]/g,
+    /import\s+.*?from\s+['"]([^'"]+)['"]/g
+  ];
+  patterns.forEach((re) => {
+    let m;
+    while ((m = re.exec(code))) {
+      let pkg = (m[1] || '').split('/')[0].trim();
+      if (pkg && !NODE_BUILTIN.has(pkg) && !pkg.startsWith('.') && !pkg.startsWith('@/') && pkg.length > 1) {
+        set.add(pkg === 'discord' ? 'discord.js' : pkg);
+      }
     }
-  }
+  });
 }
 
 function scanProjectDeps(pDir, lang) {
   const set = new Set();
-  const skipDirs = new Set(['modules', 'node_modules', '.git', '__pycache__', 'venv', '.venv']);
+  const skipDirs = new Set(['modules', 'node_modules', '.git', '__pycache__', 'venv', '.venv', 'dist', 'build', '.egg-info']);
   const walk = (dir) => {
     let ents = [];
     try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
@@ -200,7 +213,7 @@ function scanProjectDeps(pDir, lang) {
       } else {
         const ext = path.extname(ent.name).toLowerCase();
         if (lang === 'Python' && ext !== '.py') continue;
-        if (lang !== 'Python' && !['.js', '.mjs', '.cjs', '.ts'].includes(ext)) continue;
+        if (lang !== 'Python' && !['.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx'].includes(ext)) continue;
         try {
           const content = fs.readFileSync(path.join(dir, ent.name), 'utf8');
           if (lang === 'Python') detectPyDeps(content, set);
@@ -209,7 +222,9 @@ function scanProjectDeps(pDir, lang) {
       }
     }
   };
-  walk(pDir);
+  if (fs.existsSync(pDir)) {
+    try { walk(pDir); } catch (e) {}
+  }
 
   if (lang === 'Python') {
     const reqPath = path.join(pDir, 'requirements.txt');
@@ -505,7 +520,7 @@ wss.on('connection', (ws, req) => {
           }
           const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary --upgrade "${pkg}" --target ./modules` : `npm install --no-audit --no-fund --prefer-offline "${pkg}"`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 8 * 60 * 1000, maxBuffer: 1024 * 1024 * 30 }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 12 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -523,7 +538,7 @@ wss.on('connection', (ws, req) => {
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
           let pkgs = Array.isArray(data.pkgs) ? data.pkgs : [];
           let scanned = [];
-          try { scanned = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) {}
+          try { scanned = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) { console.error('[DEPS] Scan error:', e); }
           const merged = new Set();
           pkgs.concat(scanned).forEach((pk) => {
             const safe = sanitizePkgName(pk);
@@ -560,7 +575,7 @@ wss.on('connection', (ws, req) => {
           }
           const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary --upgrade -r requirements.txt --target ./modules` : `npm install --no-audit --no-fund --prefer-offline --no-package-lock`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 25 * 60 * 1000, maxBuffer: 1024 * 1024 * 100 }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) {
@@ -1183,8 +1198,32 @@ app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
     p.files[relPath] = bufferToStoredString(buf);
     saveDB();
     broadcastLog(u, p.id, '[System] Uploaded ' + relPath, 'info');
+    
+    if (relPath.endsWith('.py') || relPath.endsWith('.js') || relPath.endsWith('.ts') || relPath.endsWith('.mjs') || relPath.endsWith('.cjs')) {
+      try {
+        const detectedDeps = scanProjectDeps(pDir, p.lang || 'Python');
+        if (detectedDeps && detectedDeps.length > 0) {
+          const missing = detectedDeps.filter(dep => {
+            const modulesDir = path.join(pDir, p.lang === 'Python' ? 'modules' : 'node_modules');
+            if (!fs.existsSync(modulesDir)) return true;
+            if (p.lang === 'Python') {
+              return !fs.existsSync(path.join(modulesDir, dep));
+            } else {
+              return !fs.existsSync(path.join(modulesDir, dep));
+            }
+          });
+          if (missing.length > 0) {
+            broadcastEvent(u, { event: 'missingPackages', projectId: p.id, packages: missing });
+          }
+        }
+      } catch (e) {
+        console.error('[UPLOAD] Dep scan error:', e);
+      }
+    }
+    
     res.json({ success: true, path: relPath });
   } catch (e) {
+    console.error('[UPLOAD] Error:', e);
     try { if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch(e2) {}
     res.json({ success: false });
   }
@@ -1409,6 +1448,27 @@ app.post('/api/projects/:id/start', async (req, res) => {
         fs.writeFileSync(filePath, storedStringToBuffer(p.files[fname]));
       }
     }
+    
+    try {
+      const detectedDeps = scanProjectDeps(pDir, p.lang || 'Python');
+      if (detectedDeps && detectedDeps.length > 0) {
+        const modulesDir = path.join(pDir, p.lang === 'Python' ? 'modules' : 'node_modules');
+        const missing = detectedDeps.filter(dep => {
+          if (!fs.existsSync(modulesDir)) return true;
+          if (p.lang === 'Python') {
+            return !fs.existsSync(path.join(modulesDir, dep));
+          } else {
+            return !fs.existsSync(path.join(modulesDir, dep));
+          }
+        });
+        if (missing.length > 0) {
+          broadcastLog(u, p.id, `[System] Detected missing dependencies: ${missing.join(', ')}`, 'warn');
+        }
+      }
+    } catch (e) {
+      console.error('[START] Dep scan error:', e);
+    }
+    
     const mainFile = Object.keys(p.files || {})[0] || (p.lang === 'Python' ? 'main.py' : 'index.js');
 
     const envVars = { ...process.env, BOT_TOKEN: p.botToken || '', TOKEN: p.botToken || '' };
