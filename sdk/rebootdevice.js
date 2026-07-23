@@ -4,7 +4,6 @@
   var STYLE_ID = 'rc-device-style';
   var STORE_KEY = 'rc_device_detected_type';
   var REFRESH_KEY = 'rc_device_refreshed';
-  var CHANGE_SCAN_KEY = 'rc_device_change_scanned';
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -47,100 +46,54 @@
     return null;
   }
 
-  function mq(q) {
-    try { return !!(window.matchMedia && window.matchMedia(q).matches); } catch (e) { return false; }
-  }
-
-  function detectClientSide(extraHints) {
-    extraHints = extraHints || {};
+  function detectClientSide() {
     var ua = (navigator.userAgent || '').toLowerCase();
     var uaData = getUAData();
     var touch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0 || (navigator.msMaxTouchPoints || 0) > 0;
-    var mtp = navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0;
-    var coarsePointer = mq('(pointer:coarse)');
-    var finePointer = mq('(pointer:fine)');
-    var noHover = mq('(hover:none)');
-    var anyHover = mq('(hover:hover)');
+    var coarsePointer = false;
+    try { coarsePointer = window.matchMedia && window.matchMedia('(pointer:coarse)').matches; } catch (e) {}
+    var noHover = false;
+    try { noHover = window.matchMedia && window.matchMedia('(hover:none)').matches; } catch (e) {}
     var w = window.screen && window.screen.width ? window.screen.width : window.innerWidth;
     var h = window.screen && window.screen.height ? window.screen.height : window.innerHeight;
-    var aw = window.screen && window.screen.availWidth ? window.screen.availWidth : w;
-    var ah = window.screen && window.screen.availHeight ? window.screen.availHeight : h;
-    var vw = window.innerWidth || w || 0;
-    var vh = window.innerHeight || h || 0;
     var minSide = Math.min(w || 0, h || 0);
     var maxSide = Math.max(w || 0, h || 0);
-    var minViewport = Math.min(vw || 0, vh || 0);
-    var maxViewport = Math.max(vw || 0, vh || 0);
-    var dpr = window.devicePixelRatio || 1;
-    var scores = { mobile: 0, tablet: 0, desktop: 0, tv: 0, console: 0, bot: 0 };
-
-    if (extraHints.mobile === true || (uaData && uaData.mobile === true)) {
-      scores.mobile += 4;
-      if (minSide >= 600 || maxSide >= 900) scores.tablet += 3;
-    } else if (extraHints.mobile === false || (uaData && uaData.mobile === false)) {
-      scores.desktop += 2;
-    }
-
-    if (extraHints.platform || (uaData && uaData.platform)) {
-      var platHint = String(extraHints.platform || uaData.platform || '').toLowerCase();
-      if (platHint.indexOf('android') !== -1) scores.mobile += 1;
-      if (platHint.indexOf('iphone') !== -1) scores.mobile += 4;
-      if (platHint.indexOf('ipad') !== -1) scores.tablet += 5;
-    }
-
-    if (/bot|crawl|spider|slurp|bingpreview|headless|googlebot|bingbot|duckduckbot|baiduspider|yandexbot|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot|ahrefsbot|semrushbot|mj12bot|pingdom|uptimerobot|linkedinbot|embedly|quora link preview|vkshare|w3c_validator/.test(ua)) {
-      scores.bot += 10;
-    }
-    if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s|crkey|roku/.test(ua)) scores.tv += 8;
-    if (/xbox|playstation|nintendo/.test(ua)) scores.console += 8;
-    if (/ipad/.test(ua)) scores.tablet += 6;
-    if (/iphone|ipod/.test(ua)) scores.mobile += 6;
-    if (/android/.test(ua) && /mobile/.test(ua)) scores.mobile += 5;
-    if (/android/.test(ua) && !/mobile/.test(ua)) scores.tablet += 5;
-    if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10|sm-t|tab\s/.test(ua)) scores.tablet += 5;
-    if (/mobi|windows phone|blackberry|iemobile|opera mini|fennec/.test(ua)) scores.mobile += 4;
-    if (/macintosh/.test(ua) && (touch || mtp > 1 || coarsePointer)) scores.tablet += 5;
-    if (/windows nt|x11|cros|linux/.test(ua) && !touch && !coarsePointer) scores.desktop += 3;
-    if (/windows nt/.test(ua) && touch && minSide >= 700) scores.tablet += 2;
-
-    if (touch || mtp > 0) {
-      if (minSide > 0 && minSide < 600) scores.mobile += 3;
-      else if (minSide >= 600 && minSide < 1100) scores.tablet += 3;
-      else if (minSide >= 1100) scores.desktop += 1;
-    }
-    if (coarsePointer) scores.mobile += 1;
-    if (noHover && !anyHover) scores.mobile += 1;
-    if (finePointer && anyHover && !touch) scores.desktop += 3;
-    if (mq('(max-width: 600px)') && (touch || coarsePointer || noHover)) scores.mobile += 2;
-    if (mq('(min-width: 601px) and (max-width: 1024px)') && (touch || coarsePointer)) scores.tablet += 2;
-    if (mq('(min-width: 1025px)') && finePointer && anyHover) scores.desktop += 2;
-    if (dpr >= 2 && minSide > 0 && minSide <= 430) scores.mobile += 1;
-    if (dpr >= 2 && minSide >= 744 && maxSide >= 1024 && touch) scores.tablet += 2;
-    if (minViewport > 0 && minViewport < 480 && maxViewport < 900) scores.mobile += 2;
-    if (minViewport >= 700 && minViewport <= 1180 && (touch || coarsePointer)) scores.tablet += 1;
-    if (maxSide >= 1920 && minSide >= 1080 && !touch && finePointer) scores.desktop += 2;
-    if (maxSide >= 1920 && minSide >= 1000 && !touch && /tv|smart-tv|crkey|roku/.test(ua)) scores.tv += 2;
-
     var type = 'desktop';
-    var best = -1;
-    Object.keys(scores).forEach(function(k) {
-      if (scores[k] > best) { best = scores[k]; type = k; }
-    });
-    if (best <= 0) type = 'desktop';
 
-    if (type === 'mobile' && minSide >= 768 && maxSide >= 1024 && !/iphone|ipod|android.*mobile/.test(ua)) type = 'tablet';
-    if (type === 'tablet' && minSide > 0 && minSide < 520 && /iphone|ipod|android.*mobile/.test(ua)) type = 'mobile';
-    if (type === 'desktop' && (touch || coarsePointer || noHover) && minSide > 0 && minSide < 640) type = 'mobile';
-    if (type === 'desktop' && (touch || coarsePointer) && minSide >= 640 && minSide < 1180) type = 'tablet';
+    if (uaData && typeof uaData.mobile === 'boolean' && uaData.mobile) {
+      type = maxSide >= 900 ? 'tablet' : 'mobile';
+    } else if (/ipad/.test(ua) || (/macintosh/.test(ua) && (touch || coarsePointer))) {
+      type = 'tablet';
+    } else if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) {
+      type = 'tablet';
+    } else if (/android/.test(ua) && /mobile/.test(ua)) {
+      type = (minSide && minSide >= 600) ? 'tablet' : 'mobile';
+    } else if (/mobi|iphone|ipod|windows phone|blackberry|iemobile|opera mini|fennec/.test(ua)) {
+      type = 'mobile';
+    } else if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s|crkey|roku/.test(ua)) {
+      type = 'tv';
+    } else if (/xbox|playstation|nintendo/.test(ua)) {
+      type = 'console';
+    } else if (/bot|crawl|spider|slurp|bingpreview|headless|googlebot|bingbot|duckduckbot|baiduspider|yandexbot|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot|ahrefsbot|semrushbot|mj12bot|pingdom|uptimerobot|linkedinbot|embedly|quora link preview|vkshare|w3c_validator/.test(ua)) {
+      type = 'bot';
+    } else {
+      type = 'desktop';
+    }
+
+    if (type === 'desktop' && (touch || coarsePointer || noHover)) {
+      if (minSide && minSide < 640) type = 'mobile';
+      else if (minSide && minSide < 1180) type = 'tablet';
+    }
 
     var os = 'unknown';
-    var plat = String(extraHints.platform || (uaData && uaData.platform) || '').toLowerCase();
-    if (plat.indexOf('win') !== -1) os = 'windows';
-    else if (plat.indexOf('mac') !== -1) os = 'macos';
-    else if (plat.indexOf('android') !== -1) os = 'android';
-    else if (plat.indexOf('chrome') !== -1 || plat.indexOf('cros') !== -1) os = 'chromeos';
-    else if (plat.indexOf('linux') !== -1) os = 'linux';
-    else if (plat.indexOf('ios') !== -1 || plat.indexOf('iphone') !== -1 || plat.indexOf('ipad') !== -1) os = 'ios';
+    if (uaData && uaData.platform) {
+      var plat = String(uaData.platform).toLowerCase();
+      if (plat.indexOf('win') !== -1) os = 'windows';
+      else if (plat.indexOf('mac') !== -1) os = 'macos';
+      else if (plat.indexOf('android') !== -1) os = 'android';
+      else if (plat.indexOf('chrome') !== -1) os = 'chromeos';
+      else if (plat.indexOf('linux') !== -1) os = 'linux';
+    }
     if (os === 'unknown') {
       if (/windows nt/.test(ua)) os = 'windows';
       else if (/mac os x|macintosh/.test(ua)) os = 'macos';
@@ -149,14 +102,11 @@
       else if (/cros/.test(ua)) os = 'chromeos';
       else if (/linux/.test(ua)) os = 'linux';
     }
-    if (os === 'macos' && (touch || coarsePointer || mtp > 1) && type !== 'desktop') os = 'ios';
+    if (os === 'macos' && (touch || coarsePointer) && type !== 'desktop') os = 'ios';
 
     var brandNames = [];
     if (uaData && Array.isArray(uaData.brands)) {
       brandNames = uaData.brands.map(function(b) { return (b.brand || '').toLowerCase(); });
-    }
-    if (Array.isArray(extraHints.brands)) {
-      brandNames = brandNames.concat(extraHints.brands.map(function(b) { return String(b.brand || b || '').toLowerCase(); }));
     }
     function hasBrand(name) { return brandNames.some(function(b) { return b.indexOf(name) !== -1; }); }
 
@@ -172,73 +122,17 @@
     else if (/fxios|firefox/.test(ua)) browser = 'firefox';
     else if (/safari/.test(ua)) browser = 'safari';
 
-    return {
-      type: type,
-      os: os,
-      browser: browser,
-      touch: touch,
-      screenWidth: w || 0,
-      screenHeight: h || 0,
-      availWidth: aw || 0,
-      availHeight: ah || 0,
-      viewportWidth: vw || 0,
-      viewportHeight: vh || 0,
-      dpr: dpr,
-      maxTouchPoints: mtp
-    };
-  }
-
-  function enrichWithHighEntropy(cb) {
-    var base = detectClientSide();
-    var uaData = getUAData();
-    if (!uaData || typeof uaData.getHighEntropyValues !== 'function') {
-      cb(base);
-      return;
-    }
-    uaData.getHighEntropyValues(['platform', 'model', 'mobile', 'platformVersion', 'fullVersionList', 'architecture', 'bitness'])
-      .then(function(vals) {
-        var hints = {
-          mobile: vals && typeof vals.mobile === 'boolean' ? vals.mobile : undefined,
-          platform: vals && vals.platform ? vals.platform : undefined,
-          brands: vals && vals.fullVersionList ? vals.fullVersionList : undefined,
-          model: vals && vals.model ? vals.model : undefined
-        };
-        var refined = detectClientSide(hints);
-        if (vals && vals.model) {
-          var model = String(vals.model).toLowerCase();
-          if (/ipad|sm-t|tab|pixel c|nexus 7|nexus 9|nexus 10/.test(model)) refined.type = 'tablet';
-          if (/iphone|pixel [0-9]|sm-g|sm-s|sm-a|oneplus|pixel/.test(model) && refined.type === 'desktop') refined.type = 'mobile';
-        }
-        refined.model = vals && vals.model ? vals.model : '';
-        refined.platformVersion = vals && vals.platformVersion ? vals.platformVersion : '';
-        cb(refined);
-      })
-      .catch(function() { cb(base); });
+    return { type: type, os: os, browser: browser, touch: touch, screenWidth: w || 0, screenHeight: h || 0 };
   }
 
   function verifyWithServer(apiKey, clientInfo, cb) {
     var base = (window.RebootDevice && window.RebootDevice._base) || 'https://rebootcord.world';
-    var qs = '?touch=' + (clientInfo.touch ? '1' : '0') +
-      '&mtp=' + (navigator.maxTouchPoints || 0) +
-      '&w=' + (clientInfo.screenWidth || 0) +
-      '&h=' + (clientInfo.screenHeight || 0) +
-      '&vw=' + (clientInfo.viewportWidth || 0) +
-      '&vh=' + (clientInfo.viewportHeight || 0);
+    var qs = '?touch=' + (clientInfo.touch ? '1' : '0') + '&mtp=' + (navigator.maxTouchPoints || 0) + '&w=' + (clientInfo.screenWidth || 0);
     if (typeof fetch !== 'function') { cb(clientInfo); return; }
     fetch(base + '/api/v1/device' + qs, { headers: { 'Authorization': apiKey } })
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        if (data && data.success) cb({
-          type: data.type,
-          os: data.os,
-          browser: data.browser,
-          touch: clientInfo.touch,
-          screenWidth: clientInfo.screenWidth,
-          screenHeight: clientInfo.screenHeight,
-          viewportWidth: clientInfo.viewportWidth,
-          viewportHeight: clientInfo.viewportHeight,
-          dpr: clientInfo.dpr
-        });
+        if (data && data.success) cb({ type: data.type, os: data.os, browser: data.browser });
         else cb(clientInfo);
       })
       .catch(function() { cb(clientInfo); });
@@ -252,12 +146,6 @@
     });
     el.classList.add('rc-device-' + type);
     el.setAttribute('data-rc-device', type);
-    try {
-      if (document.body) document.body.setAttribute('data-device', type);
-    } catch (e) {}
-    try {
-      window.dispatchEvent(new CustomEvent('rc-device-change', { detail: { type: type } }));
-    } catch (e2) {}
   }
 
   function label(type) {
@@ -308,11 +196,7 @@
       function doRefreshOnce() {
         if (refreshed) return;
         refreshed = true;
-        try {
-          sessionStorage.setItem(STORE_KEY, info.type);
-          sessionStorage.setItem(REFRESH_KEY, '1');
-          sessionStorage.setItem(CHANGE_SCAN_KEY, info.type);
-        } catch (e) {}
+        try { sessionStorage.setItem(STORE_KEY, info.type); sessionStorage.setItem(REFRESH_KEY, '1'); } catch (e) {}
         location.reload();
       }
 
@@ -334,9 +218,9 @@
         var alreadyRefreshed = false;
         try { alreadyRefreshed = sessionStorage.getItem(REFRESH_KEY) === '1'; } catch (e) {}
         if (opts.autoRefresh !== false && !alreadyRefreshed) {
-          timers.push(setTimeout(doRefreshOnce, 2200));
+          timers.push(setTimeout(doRefreshOnce, 2600));
         }
-      }, 1800));
+      }, 2000));
 
       if (typeof opts.onDetected === 'function') {
         timers.push(setTimeout(function() { opts.onDetected(info); }, 900));
@@ -363,68 +247,18 @@
   var currentInfo = null;
   var currentBanner = null;
   var resizeTimer = null;
-  var changeRescanDone = false;
-  var applyRoot = null;
-  var initOpts = null;
-
-  function accurateRescanOnce(fromType, toInfo) {
-    if (changeRescanDone) return;
-    changeRescanDone = true;
-    applyDeviceClass(applyRoot, toInfo.type);
-    currentInfo = toInfo;
-    try {
-      sessionStorage.setItem(STORE_KEY, toInfo.type);
-      sessionStorage.setItem(CHANGE_SCAN_KEY, fromType + '->' + toInfo.type);
-      sessionStorage.removeItem(REFRESH_KEY);
-    } catch (e) {}
-    if (initOpts && typeof initOpts.onDetected === 'function') {
-      try { initOpts.onDetected(toInfo); } catch (e2) {}
-    }
-    if (!initOpts || initOpts.silent) {
-      try {
-        sessionStorage.setItem(REFRESH_KEY, '1');
-      } catch (e3) {}
-      location.reload();
-      return;
-    }
-    if (currentBanner) hideBanner(currentBanner);
-    currentBanner = showBanner(initOpts || {}, toInfo);
-  }
-
-  function handlePossibleDeviceChange() {
-    enrichWithHighEntropy(function(info) {
-      if (!currentInfo) {
-        currentInfo = info;
-        applyDeviceClass(applyRoot, info.type);
-        return;
-      }
-      if (info.type !== currentInfo.type) {
-        var prev = currentInfo.type;
-        if (initOpts && initOpts.apiKey) {
-          verifyWithServer(initOpts.apiKey, info, function(verified) {
-            if (verified.type !== prev) accurateRescanOnce(prev, verified);
-            else {
-              currentInfo = verified;
-              applyDeviceClass(applyRoot, verified.type);
-            }
-          });
-        } else {
-          accurateRescanOnce(prev, info);
-        }
-      } else {
-        currentInfo = info;
-        applyDeviceClass(applyRoot, info.type);
-      }
-    });
-  }
+  var RESCAN_KEY = 'rc_device_rescanned_once';
 
   var RebootDevice = {
     _base: 'https://rebootcord.world',
     init: function(opts) {
       opts = opts || {};
-      initOpts = opts;
-      changeRescanDone = false;
+      var clientInfo = detectClientSide();
+      var applyRoot;
       try { applyRoot = opts.root ? document.querySelector(opts.root) : document.documentElement; } catch (e) { applyRoot = document.documentElement; }
+
+      var didAutoRescan = false;
+      try { didAutoRescan = sessionStorage.getItem(RESCAN_KEY) === '1'; } catch (e) {}
 
       var finish = function(info) {
         currentInfo = info;
@@ -446,44 +280,54 @@
       };
 
       var run = function() {
-        enrichWithHighEntropy(function(clientInfo) {
-          if (opts.apiKey) verifyWithServer(opts.apiKey, clientInfo, finish);
-          else finish(clientInfo);
-        });
+        if (opts.apiKey) verifyWithServer(opts.apiKey, clientInfo, finish);
+        else finish(clientInfo);
       };
       if (document.body || document.readyState !== 'loading') run();
       else document.addEventListener('DOMContentLoaded', run, { once: true });
 
+      var handleDeviceChange = function() {
+        var info = detectClientSide();
+        if (!currentInfo || info.type === currentInfo.type) return;
+        if (!didAutoRescan) {
+          didAutoRescan = true;
+          try {
+            sessionStorage.setItem(RESCAN_KEY, '1');
+            sessionStorage.removeItem(STORE_KEY);
+            sessionStorage.removeItem(REFRESH_KEY);
+          } catch (e) {}
+          if (currentBanner) { hideBanner(currentBanner); currentBanner = null; }
+          finish(info);
+        } else {
+          currentInfo = info;
+          applyDeviceClass(applyRoot, info.type);
+          if (typeof opts.onDetected === 'function') opts.onDetected(info);
+        }
+      };
+
       if (opts.watchResize !== false) {
         window.addEventListener('resize', function() {
           if (resizeTimer) clearTimeout(resizeTimer);
-          resizeTimer = setTimeout(handlePossibleDeviceChange, 180);
+          resizeTimer = setTimeout(handleDeviceChange, 250);
         }, { passive: true });
         window.addEventListener('orientationchange', function() {
-          setTimeout(handlePossibleDeviceChange, 280);
+          setTimeout(handleDeviceChange, 350);
         }, { passive: true });
         try {
           if (window.matchMedia) {
-            var mqMobile = window.matchMedia('(max-width: 767px)');
-            var mqTablet = window.matchMedia('(min-width: 768px) and (max-width: 1024px)');
-            var onMq = function() { setTimeout(handlePossibleDeviceChange, 120); };
-            if (mqMobile.addEventListener) {
-              mqMobile.addEventListener('change', onMq);
-              mqTablet.addEventListener('change', onMq);
-            } else if (mqMobile.addListener) {
-              mqMobile.addListener(onMq);
-              mqTablet.addListener(onMq);
-            }
+            var mqCoarse = window.matchMedia('(pointer:coarse)');
+            var mqHover = window.matchMedia('(hover:none)');
+            var onMq = function() { setTimeout(handleDeviceChange, 100); };
+            if (mqCoarse.addEventListener) mqCoarse.addEventListener('change', onMq);
+            else if (mqCoarse.addListener) mqCoarse.addListener(onMq);
+            if (mqHover.addEventListener) mqHover.addEventListener('change', onMq);
+            else if (mqHover.addListener) mqHover.addListener(onMq);
           }
         } catch (e) {}
       }
     },
     getDevice: function() { return currentInfo; },
     detect: detectClientSide,
-    rescan: function() {
-      changeRescanDone = false;
-      handlePossibleDeviceChange();
-    },
     hide: function() { hideBanner(currentBanner); currentBanner = null; }
   };
 
