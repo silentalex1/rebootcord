@@ -1106,9 +1106,17 @@ function saveCurrentFile() {
   if (!state.currentProject || !state.editorFile) return;
   state.currentProject.files = state.currentProject.files || {};
   state.currentProject.files[state.editorFile] = state.codeContent;
+  state.originalCodeContent = state.codeContent;
+  const access = state.projectAccess;
+  if (access && !access.isOwner) {
+    fetch('/api/projects/' + state.currentProject.id + '/savefile', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: state.editorFile, content: state.codeContent })
+    });
+    return;
+  }
   const proj = state.projects.find(x => x.id === state.currentProject.id);
   if (proj) proj.files = state.currentProject.files;
-  state.originalCodeContent = state.codeContent;
   saveProjects();
 }
 
@@ -1116,7 +1124,7 @@ function switchFile(filename) {
   saveCurrentFile();
   state.editorFile = filename;
   state.codeContent = "";
-  if (state.currentProject.files && state.currentProject.files[filename] !== undefined) {
+  if (state.currentProject.files && state.currentProject.files[filename] !== undefined && state.currentProject.files[filename] !== null) {
     state.codeContent = state.currentProject.files[filename];
     state.originalCodeContent = state.codeContent;
   } else {
@@ -1536,14 +1544,14 @@ function openProject(id) {
         flat.forEach(function(f) {
           if (!f.isDir) {
             const key = f.rel || f.name;
-            if (p.files[key] === undefined) p.files[key] = "";
+            if (p.files[key] === undefined) p.files[key] = null;
           }
         });
       }
     }
     if (p.type === "discord") {
       state.editorFile = getDefaultFilename(p);
-      if (p.files[state.editorFile] !== undefined) {
+      if (p.files[state.editorFile] !== undefined && p.files[state.editorFile] !== null) {
         state.codeContent = p.files[state.editorFile];
         state.originalCodeContent = state.codeContent;
         render();
@@ -1726,7 +1734,7 @@ function renderBotDashboard() {
           if (d.success) {
             state.currentFileTree = d.files || [];
             const flat = collectFiles(d.files || []);
-            flat.forEach(function(f){ if (!f.isDir) { const k = f.rel || f.name; if (p.files[k] === undefined) p.files[k] = ""; } });
+            flat.forEach(function(f){ if (!f.isDir) { const k = f.rel || f.name; if (p.files[k] === undefined) p.files[k] = null; } });
             scheduleRender();
           }
         });
