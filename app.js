@@ -209,6 +209,16 @@ function connectWS() {
         checkShareInvites();
       }
       if (data.event === 'inboxMessage') {
+        const msg = data.message || {};
+        if (msg.id && state.knownInboxIds && !state.knownInboxIds[String(msg.id)]) {
+          state.knownInboxIds[String(msg.id)] = true;
+          state.lastInboxNotifyId = msg.id;
+          state.inboxUnreadCount = (state.inboxUnreadCount || 0) + 1;
+          updateDocumentTitle(state.inboxUnreadCount);
+          showBrowserInboxNotification(msg.body || msg.title || "You have a new inbox message.", msg.id);
+          state.showInboxNotification = true;
+          scheduleRender();
+        }
         checkInbox({ showOverlayOnLoad: false });
       }
     } catch(err) {}
@@ -274,14 +284,14 @@ function updateDocumentTitle(count) {
 
 function requestNotificationPermission() {
   if (typeof Notification === "undefined") return Promise.resolve("unsupported");
-  if (Notification.permission === "granted") return Promise.resolve("granted");
+  if (Notification.permission === "granted") {
+    try { localStorage.setItem(NOTIF_PERM_KEY, "1"); } catch (e) {}
+    return Promise.resolve("granted");
+  }
   if (Notification.permission === "denied") {
-    try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); } catch (e) {}
+    try { localStorage.setItem(NOTIF_DENIED_KEY, "1"); localStorage.setItem(NOTIF_PERM_KEY, "1"); } catch (e) {}
     return Promise.resolve("denied");
   }
-  let asked = false;
-  try { asked = localStorage.getItem(NOTIF_PERM_KEY) === "1"; } catch (e) {}
-  if (asked) return Promise.resolve(Notification.permission);
   try { localStorage.setItem(NOTIF_PERM_KEY, "1"); } catch (e) {}
   return Notification.requestPermission().then(function(p) {
     if (p === "denied") {
@@ -291,13 +301,13 @@ function requestNotificationPermission() {
   }).catch(function() { return "default"; });
 }
 
-function showBrowserInboxNotification(messageText) {
+function showBrowserInboxNotification(messageText, messageId) {
   if (typeof Notification === "undefined") return;
   if (Notification.permission !== "granted") return;
   try {
     const n = new Notification("New inbox message has been added check it out", {
       body: String(messageText || "You have a new inbox message."),
-      tag: "rc-inbox",
+      tag: messageId ? ("rc-inbox-" + String(messageId)) : "rc-inbox",
       renotify: true,
       silent: false
     });
@@ -327,14 +337,13 @@ function applyInboxState(messages, opts) {
   updateDocumentTitle(unread.length);
 
   if (fresh.length) {
-    const newest = fresh[0];
-    const bodyText = newest.body || newest.title || "You have a new inbox message.";
-    if (String(newest.id) !== String(state.lastInboxNotifyId)) {
-      state.lastInboxNotifyId = newest.id;
-      showBrowserInboxNotification(bodyText);
-      state.showInboxNotification = true;
-      scheduleRender();
-    }
+    fresh.forEach(function(msg) {
+      if (String(msg.id) === String(state.lastInboxNotifyId)) return;
+      state.lastInboxNotifyId = msg.id;
+      showBrowserInboxNotification(msg.body || msg.title || "You have a new inbox message.", msg.id);
+    });
+    state.showInboxNotification = true;
+    scheduleRender();
   } else if (!isFirstLoad && unread.length === 0) {
     state.showInboxNotification = false;
   } else if (isFirstLoad && unread.length > 0 && opts.showOverlayOnLoad !== false) {

@@ -20,13 +20,13 @@ function updateDocumentTitle(count) {
   document.title = n > 0 ? (BASE_DOC_TITLE + ' (' + n + ')') : BASE_DOC_TITLE;
 }
 
-function showBrowserInboxNotification(messageText) {
+function showBrowserInboxNotification(messageText, messageId) {
   if (typeof Notification === 'undefined') return;
   if (Notification.permission !== 'granted') return;
   try {
     const n = new Notification('New inbox message has been added check it out', {
       body: String(messageText || 'You have a new inbox message.'),
-      tag: 'rc-inbox',
+      tag: messageId ? ('rc-inbox-' + String(messageId)) : 'rc-inbox',
       renotify: true
     });
     n.onclick = function() {
@@ -38,10 +38,10 @@ function showBrowserInboxNotification(messageText) {
 
 function requestNotificationPermission() {
   if (typeof Notification === 'undefined') return Promise.resolve('unsupported');
-  if (Notification.permission !== 'default') return Promise.resolve(Notification.permission);
-  let asked = false;
-  try { asked = localStorage.getItem('rc_notif_perm_asked') === '1'; } catch (e) {}
-  if (asked) return Promise.resolve(Notification.permission);
+  if (Notification.permission === 'granted' || Notification.permission === 'denied') {
+    try { localStorage.setItem('rc_notif_perm_asked', '1'); } catch (e) {}
+    return Promise.resolve(Notification.permission);
+  }
   try { localStorage.setItem('rc_notif_perm_asked', '1'); } catch (e) {}
   return Notification.requestPermission().catch(function() { return 'default'; });
 }
@@ -63,11 +63,11 @@ function trackNewMessages(messages) {
   }
   knownInboxIds = ids;
   if (fresh.length) {
-    const newest = fresh[0];
-    if (String(newest.id) !== String(lastNotifyId)) {
-      lastNotifyId = newest.id;
-      showBrowserInboxNotification(newest.body || newest.title || 'You have a new inbox message.');
-    }
+    fresh.forEach(function(msg) {
+      if (String(msg.id) === String(lastNotifyId)) return;
+      lastNotifyId = msg.id;
+      showBrowserInboxNotification(msg.body || msg.title || 'You have a new inbox message.', msg.id);
+    });
   }
   updateDocumentTitle(countUnread(list));
 }

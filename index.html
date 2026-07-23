@@ -194,10 +194,10 @@ document.addEventListener('keydown', e => {
   const KEY = 'rc_notif_perm_asked';
   function ask() {
     if (typeof Notification === 'undefined') return;
-    if (Notification.permission !== 'default') return;
-    let asked = false;
-    try { asked = localStorage.getItem(KEY) === '1'; } catch (e) {}
-    if (asked) return;
+    if (Notification.permission !== 'default') {
+      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+      return;
+    }
     try { localStorage.setItem(KEY, '1'); } catch (e) {}
     Notification.requestPermission().catch(function() {});
   }
