@@ -52,7 +52,7 @@ const state = {
   mcLogs: [],
   terminalLogs: [],
   terminalInput: "",
-  consoleTab: "logs",
+  consoleTab: "output",
   mcFiles: [],
   mcMods: [],
   mcBackups: [],
@@ -1880,7 +1880,7 @@ function createProject() {
   state.currentProject = p;
   state.newName = ""; state.newMcIp = ""; state.newMcServerType = "Vanilla";
   state.mcView = "overview"; state.mcFiles = []; state.mcMods = []; state.mcBackups = [];
-  state.botLogs = []; state.mcLogs = []; state.terminalLogs = []; state.missingPackages = []; state.consoleTab = "logs";
+  state.botLogs = []; state.mcLogs = []; state.terminalLogs = []; state.missingPackages = []; state.consoleTab = "output";
   state.searchTerm = ""; state.currentFileTree = []; state.expandedFolders = [];
   if (p.type === "discord") {
     state.editorFile = getDefaultFilename(p);
@@ -1907,7 +1907,7 @@ function openProject(id) {
   state.mcFiles = p._mcFiles || [];
   state.mcMods = p._mcMods || [];
   state.mcBackups = p._mcBackups || [];
-  state.botLogs = []; state.mcLogs = []; state.terminalLogs = []; state.missingPackages = []; state.consoleTab = "logs";
+  state.botLogs = []; state.mcLogs = []; state.terminalLogs = []; state.missingPackages = []; state.consoleTab = "output";
   state.expandedFolders = [];
   state.currentFileTree = [];
   state.projectAccess = null;
@@ -2400,6 +2400,7 @@ function buildConsole() {
   const terminalPanel = el("div", { className: "terminal-panel" },
     terminalBody,
     el("div", { className: "terminal-input-row" },
+      el("span", { className: "terminal-prompt" }, "$"),
       terminalInput,
       el("button", { className: "btn-send", onClick: () => {
         const cmd = state.terminalInput.trim();
@@ -2408,19 +2409,19 @@ function buildConsole() {
           state.terminalInput = "";
           terminalInput.value = "";
         }
-      } }, "Send")
+      } }, "Execute")
     )
   );
 
   return el("div", { className: "console-panel discord-console" },
     el("div", { className: "console-toolbar discord-console-toolbar" },
       el("div", { className: "console-tabs" },
-        el("button", { className: "console-tab" + (state.consoleTab === "logs" ? " active" : ""), onClick: () => { state.consoleTab = "logs"; render(); } }, "Logs"),
+        el("button", { className: "console-tab" + (state.consoleTab === "output" ? " active" : ""), onClick: () => { state.consoleTab = "output"; render(); } }, "Output"),
         el("button", { className: "console-tab" + (state.consoleTab === "terminal" ? " active" : ""), onClick: () => { state.consoleTab = "terminal"; render(); } }, "Terminal")
       ),
       el("div", { className: "console-controls" },
         el("button", { className: "btn-clear", onClick: () => {
-          if (state.consoleTab === "logs") {
+          if (state.consoleTab === "output") {
             state.botLogs = [];
           } else {
             state.terminalLogs = [];
@@ -2429,7 +2430,7 @@ function buildConsole() {
         } }, "Clear")
       )
     ),
-    state.consoleTab === "logs" ? body : terminalPanel
+    state.consoleTab === "output" ? body : terminalPanel
   );
 }
 
