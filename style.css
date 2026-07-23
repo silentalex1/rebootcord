@@ -636,3 +636,7 @@ input,textarea,select{font-family:var(--font)}
 .install-result{font-size:11px;font-weight:700;padding:6px 8px;border-radius:6px}
 .install-result.ok{background:var(--green-glow);color:var(--green)}
 .install-result.err{background:#e6394618;color:var(--red)}
+.kicked-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;animation:inboxOverlayIn .2s ease}
+.kicked-box{background:var(--surface);border:1px solid var(--red);border-radius:16px;width:100%;max-width:420px;padding:32px;box-shadow:0 20px 60px rgba(0,0,0,.7);text-align:center;animation:inboxBoxIn .3s cubic-bezier(.34,1.56,.64,1)}
+.kicked-title{font-size:22px;font-weight:800;color:var(--red);margin-bottom:14px}
+.kicked-countdown{font-size:14px;color:var(--text-dim);font-weight:600}
