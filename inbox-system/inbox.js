@@ -120,4 +120,3 @@ function loadInbox() {
 }
 
 loadInbox();
-s
