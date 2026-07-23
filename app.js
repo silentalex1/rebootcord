@@ -154,6 +154,11 @@ function connectWS() {
         state.installingPkg = false;
         scheduleRender();
       }
+      if (data.event === 'removedFromProject') {
+        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
+          showKickedOverlay();
+        }
+      }
     } catch(err) {}
   };
   ws.onclose = () => {
@@ -825,8 +830,42 @@ function fetchProjectAccess(id) {
       state.settingsPrivate = !!d.private;
       state.needsProjectPassword = !!d.locked;
       scheduleRender();
+    } else if (d.removed && state.currentProject && String(state.currentProject.id) === String(id)) {
+      showKickedOverlay();
     }
   });
+}
+
+function showKickedOverlay() {
+  if (document.getElementById('rc-kicked-overlay')) return;
+  state.currentProject = null;
+  state.page = 'projects';
+  scheduleRender();
+  const overlay = document.createElement('div');
+  overlay.id = 'rc-kicked-overlay';
+  overlay.className = 'kicked-overlay';
+  const box = document.createElement('div');
+  box.className = 'kicked-box';
+  const title = document.createElement('div');
+  title.className = 'kicked-title';
+  title.textContent = "You've been kicked.";
+  const count = document.createElement('div');
+  count.className = 'kicked-countdown';
+  let n = 3;
+  count.textContent = 'redirecting you back to main page in ' + n + '.';
+  box.appendChild(title);
+  box.appendChild(count);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const timer = setInterval(() => {
+    n -= 1;
+    if (n < 0) {
+      clearInterval(timer);
+      window.location.href = '/dashboard';
+      return;
+    }
+    count.textContent = 'redirecting you back to main page in ' + n + '.';
+  }, 1000);
 }
 
 function submitShare() {
