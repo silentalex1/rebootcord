@@ -28,3 +28,5 @@
   .inbox-delete-btn{position:static;margin-top:10px}
   .inbox-item.is-admin .inbox-item-top{padding-right:0}
 }
+.inbox-item-link{color:#5865f2;font-weight:700;text-decoration:none}
+.inbox-item-link:hover{text-decoration:underline}
