@@ -50,6 +50,9 @@ const state = {
   mcCmd: "",
   botLogs: [],
   mcLogs: [],
+  terminalLogs: [],
+  terminalInput: "",
+  consoleTab: "logs",
   mcFiles: [],
   mcMods: [],
   mcBackups: [],
@@ -227,6 +230,11 @@ function connectWS() {
       if (data.event === 'missingPackages' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
         state.missingPackages = data.packages || [];
         scheduleRender();
+      }
+      if (data.event === 'terminalOutput' && state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
+        state.terminalLogs.push({ t: getTime(), type: data.type || 'info', msg: data.msg });
+        if (state.terminalLogs.length > MAX_LOGS) state.terminalLogs.shift();
+        if (state.consoleTab === "terminal") scheduleRender();
       }
       if (data.event === 'inboxMessage') {
         const msg = data.message || {};
@@ -1872,7 +1880,7 @@ function createProject() {
   state.currentProject = p;
   state.newName = ""; state.newMcIp = ""; state.newMcServerType = "Vanilla";
   state.mcView = "overview"; state.mcFiles = []; state.mcMods = []; state.mcBackups = [];
-  state.botLogs = []; state.mcLogs = []; state.missingPackages = [];
+  state.botLogs = []; state.mcLogs = []; state.terminalLogs = []; state.missingPackages = []; state.consoleTab = "logs";
   state.searchTerm = ""; state.currentFileTree = []; state.expandedFolders = [];
   if (p.type === "discord") {
     state.editorFile = getDefaultFilename(p);
@@ -1899,7 +1907,7 @@ function openProject(id) {
   state.mcFiles = p._mcFiles || [];
   state.mcMods = p._mcMods || [];
   state.mcBackups = p._mcBackups || [];
-  state.botLogs = []; state.mcLogs = []; state.missingPackages = [];
+  state.botLogs = []; state.mcLogs = []; state.terminalLogs = []; state.missingPackages = []; state.consoleTab = "logs";
   state.expandedFolders = [];
   state.currentFileTree = [];
   state.projectAccess = null;
@@ -2040,6 +2048,16 @@ function installPkg() {
   state.installingPkg = true;
   ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: v }));
   if (input) input.value = "";
+  scheduleRender();
+}
+
+function executeTerminalCommand(cmd) {
+  if (!ws || !state.currentProject) return;
+  
+  state.terminalLogs.push({ t: getTime(), type: 'command', msg: '$ ' + cmd });
+  if (state.terminalLogs.length > MAX_LOGS) state.terminalLogs.shift();
+  
+  ws.send(JSON.stringify({ event: 'terminalCommand', projectId: state.currentProject.id, command: cmd }));
   scheduleRender();
 }
 
@@ -2352,23 +2370,66 @@ function buildConsole() {
     body.appendChild(frag);
   }
 
+  const terminalBody = el("div", { className: "terminal-body" });
+  if (state.terminalLogs.length === 0) {
+    terminalBody.appendChild(el("div", { "data-terminal-empty": "1", style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Terminal output will appear here."));
+  } else {
+    const frag = document.createDocumentFragment();
+    state.terminalLogs.forEach(l => {
+      frag.appendChild(el("div", { className: "terminal-line" },
+        el("span", { className: "terminal-time" }, l.t),
+        el("span", { className: "terminal-" + l.type }, l.msg)
+      ));
+    });
+    terminalBody.appendChild(frag);
+  }
+
+  const terminalInput = el("input", { className: "terminal-input", placeholder: "type 'help' to show commands", value: state.terminalInput });
+  terminalInput.oninput = () => { state.terminalInput = terminalInput.value; };
+  terminalInput.onkeydown = (ev) => {
+    if (ev.key === "Enter") {
+      const cmd = state.terminalInput.trim();
+      if (cmd) {
+        executeTerminalCommand(cmd);
+        state.terminalInput = "";
+        terminalInput.value = "";
+      }
+    }
+  };
+
+  const terminalPanel = el("div", { className: "terminal-panel" },
+    terminalBody,
+    el("div", { className: "terminal-input-row" },
+      terminalInput,
+      el("button", { className: "btn-send", onClick: () => {
+        const cmd = state.terminalInput.trim();
+        if (cmd) {
+          executeTerminalCommand(cmd);
+          state.terminalInput = "";
+          terminalInput.value = "";
+        }
+      } }, "Send")
+    )
+  );
+
   return el("div", { className: "console-panel discord-console" },
     el("div", { className: "console-toolbar discord-console-toolbar" },
-      el("span", { className: "console-label" }, "Console"),
+      el("div", { className: "console-tabs" },
+        el("button", { className: "console-tab" + (state.consoleTab === "logs" ? " active" : ""), onClick: () => { state.consoleTab = "logs"; render(); } }, "Logs"),
+        el("button", { className: "console-tab" + (state.consoleTab === "terminal" ? " active" : ""), onClick: () => { state.consoleTab = "terminal"; render(); } }, "Terminal")
+      ),
       el("div", { className: "console-controls" },
         el("button", { className: "btn-clear", onClick: () => {
-          state.botLogs = [];
-          const b = document.querySelector(".console-body");
-          if (b) {
-            b.innerHTML = "";
-            b.appendChild(el("div", { "data-console-empty": "1", style: { color:"var(--text-muted)", fontSize:"12px", padding:"12px" } }, "Bot console output will appear here."));
+          if (state.consoleTab === "logs") {
+            state.botLogs = [];
           } else {
-            render();
+            state.terminalLogs = [];
           }
+          render();
         } }, "Clear")
       )
     ),
-    body
+    state.consoleTab === "logs" ? body : terminalPanel
   );
 }
 
