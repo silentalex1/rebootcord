@@ -159,6 +159,10 @@ function connectWS() {
           showKickedOverlay();
         }
       }
+      if (data.event === 'addedToProject') {
+        fetchSharedProjects();
+        checkShareInvites();
+      }
     } catch(err) {}
   };
   ws.onclose = () => {
@@ -3075,6 +3079,12 @@ fetch("/api/me").then(r => r.json()).then(d => {
     checkInbox();
     checkShareInvites();
     fetchSharedProjects();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        fetchSharedProjects();
+        checkShareInvites();
+      }
+    });
     if (window.RebootDevice) {
       window.RebootDevice.init({ root: "html", onDetected: function(info) {
         document.body.setAttribute("data-device", info.type);
