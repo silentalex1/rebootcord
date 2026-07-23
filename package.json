@@ -4,6 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "bot": "python bot.py",
     "ollama:create-vision": "node scripts/create-prysmis-ai.js",
     "ollama:finetune-scaffold": "python finetune_scaffold.py"
   },
@@ -18,3 +19,4 @@
     "bcrypt": "^6.0.0"
   }
 }
+
