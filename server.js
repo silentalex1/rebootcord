@@ -23,6 +23,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 const app = express();
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
@@ -86,7 +87,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 const limiter = expressRateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 300,
   message: { success: false, message: 'Too many requests, please try again later.' }
 });
 app.use('/api/', limiter);
@@ -562,6 +563,19 @@ app.post('/register', async (req, res) => {
   const hashedPassword = await bcrypt.hash(password, 10);
   db.users.push({ username, password: hashedPassword, invite: code, discordUsername: username, projects: [], admin: false });
   delete db.inviteCodes[code];
+  db.inboxMessages = db.inboxMessages || [];
+  db.inboxMessages.unshift({
+    id: Date.now(),
+    title: 'Welcome to reboot world!',
+    body: 'this is a website where you can host your discord bots, and soon own minecraft world. Please follow ALL of the rules from the discord server.',
+    linkText: 'discord server.',
+    linkUrl: 'https://discord.gg/rNKcnJV72c',
+    ts: Date.now(),
+    readBy: [],
+    sender: 'Reboot Cord',
+    rank: 'notice',
+    recipient: username
+  });
   saveDB();
   setCookie(res, signToken(username));
   res.json({ success: true, username });
@@ -818,7 +832,9 @@ app.get('/api/inbox', (req, res) => {
       id: m.id, title: m.title, body: m.body, ts: m.ts,
       read: (m.readBy || []).includes(u),
       sender: m.sender,
-      rank: m.rank
+      rank: m.rank,
+      linkText: m.linkText,
+      linkUrl: m.linkUrl
     }));
   res.json({ success: true, messages: msgs });
 });
