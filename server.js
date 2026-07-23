@@ -166,43 +166,30 @@ const PY_STDLIB = new Set(["os","sys","json","time","random","re","math","dateti
 const NODE_BUILTIN = new Set(["fs","path","http","https","crypto","os","util","child_process","events","stream","net","dgram","dns","url","zlib","querystring","assert","buffer","console","constants","domain","punycode","readline","repl","string_decoder","timers","tls","tty","vm","worker_threads","perf_hooks","async_hooks","trace_events","inspector","wasi","diagnostics_channel"]);
 
 function detectPyDeps(code, set) {
-  const patterns = [
-    /(?:^|[\n;])\s*(?:import\s+([a-zA-Z0-9_.]+)|from\s+([a-zA-Z0-9_.]+)\s+import)/gm,
-    /(?:^|[\n;])\s*import\s+([a-zA-Z0-9_,\s]+)/gm,
-    /(?:^|[\n;])\s*from\s+([a-zA-Z0-9_.]+)\s+import/gm
-  ];
-  patterns.forEach((re) => {
-    let m;
-    while ((m = re.exec(code))) {
-      let pkg = (m[1] || m[2] || '').split('.')[0].toLowerCase().trim();
-      if (pkg && !PY_STDLIB.has(pkg) && pkg.length > 1 && /^[a-z][a-z0-9_]*$/.test(pkg)) {
-        set.add(pkg === 'discord' ? 'discord.py' : pkg);
-      }
+  const re = /(?:^|[\n;])\s*(?:import\s+([a-zA-Z0-9_.]+)|from\s+([a-zA-Z0-9_.]+)\s+import)/gm;
+  let m;
+  while ((m = re.exec(code))) {
+    let pkg = (m[1] || m[2] || '').split('.')[0].toLowerCase().trim();
+    if (pkg && !PY_STDLIB.has(pkg)) {
+      set.add(pkg === 'discord' ? 'discord.py' : pkg);
     }
-  });
+  }
 }
 
 function detectJsDeps(code, set) {
-  const patterns = [
-    /require\(['"]([^'"]+)['"]\)/g,
-    /from\s+['"]([^'"]+)['"]\s+import/g,
-    /import\s+['"]([^'"]+)['"]/g,
-    /import\s+.*?from\s+['"]([^'"]+)['"]/g
-  ];
-  patterns.forEach((re) => {
-    let m;
-    while ((m = re.exec(code))) {
-      let pkg = (m[1] || '').split('/')[0].trim();
-      if (pkg && !NODE_BUILTIN.has(pkg) && !pkg.startsWith('.') && !pkg.startsWith('@/') && pkg.length > 1) {
-        set.add(pkg === 'discord' ? 'discord.js' : pkg);
-      }
+  const re = /(?:require\(['"]([^'"]+)['"]\)|from\s+['"]([^'"]+)['"]|import\s+['"]([^'"]+)['"])/g;
+  let m;
+  while ((m = re.exec(code))) {
+    let pkg = (m[1] || m[2] || m[3] || '').split('/')[0].trim();
+    if (pkg && !NODE_BUILTIN.has(pkg) && !pkg.startsWith('.') && !pkg.startsWith('@/')) {
+      set.add(pkg === 'discord' ? 'discord.js' : pkg);
     }
-  });
+  }
 }
 
 function scanProjectDeps(pDir, lang) {
   const set = new Set();
-  const skipDirs = new Set(['modules', 'node_modules', '.git', '__pycache__', 'venv', '.venv', 'dist', 'build', '.egg-info']);
+  const skipDirs = new Set(['modules', 'node_modules', '.git', '__pycache__', 'venv', '.venv']);
   const walk = (dir) => {
     let ents = [];
     try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
@@ -213,7 +200,7 @@ function scanProjectDeps(pDir, lang) {
       } else {
         const ext = path.extname(ent.name).toLowerCase();
         if (lang === 'Python' && ext !== '.py') continue;
-        if (lang !== 'Python' && !['.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx'].includes(ext)) continue;
+        if (lang !== 'Python' && !['.js', '.mjs', '.cjs', '.ts'].includes(ext)) continue;
         try {
           const content = fs.readFileSync(path.join(dir, ent.name), 'utf8');
           if (lang === 'Python') detectPyDeps(content, set);
@@ -222,9 +209,7 @@ function scanProjectDeps(pDir, lang) {
       }
     }
   };
-  if (fs.existsSync(pDir)) {
-    try { walk(pDir); } catch (e) {}
-  }
+  walk(pDir);
 
   if (lang === 'Python') {
     const reqPath = path.join(pDir, 'requirements.txt');
@@ -402,84 +387,22 @@ function canEditFiles(access) {
   return access.isOwner || (access.hasAccess && (access.perms.editFiles || access.perms.fullAccess));
 }
 
-function findProjectOwner(projectId) {
-  for (const owner of db.users || []) {
-    const p = (owner.projects || []).find(x => String(x.id) === String(projectId));
-    if (p) return { owner, p };
-  }
-  return null;
-}
-
-function projectAudience(projectId) {
-  const found = findProjectOwner(projectId);
-  if (!found) return [];
-  const names = new Set([found.owner.username]);
-  (found.p.shared || []).forEach(s => { if (s && s.username) names.add(s.username); });
-  return Array.from(names);
-}
-
 function broadcastLog(username, projectId, msg, type) {
-  const payload = JSON.stringify({ event: 'log', projectId, msg, type: type || 'info', ts: Date.now() });
-  const audience = new Set([username].concat(projectAudience(projectId)));
+  const payload = JSON.stringify({ event: 'log', projectId, msg, type: type || 'info' });
   for (const client of wsClients) {
-    if (audience.has(client.username) && client.readyState === WebSocket.OPEN) {
-      try { client.send(payload); } catch (e) {}
+    if (client.username === username && client.readyState === WebSocket.OPEN) {
+      client.send(payload);
     }
   }
 }
 
 function broadcastEvent(username, payload) {
-  const data = JSON.stringify(Object.assign({ ts: Date.now() }, payload));
+  const data = JSON.stringify(payload);
   for (const client of wsClients) {
     if (client.username === username && client.readyState === WebSocket.OPEN) {
-      try { client.send(data); } catch (e) {}
+      client.send(data);
     }
   }
-}
-
-function broadcastInboxMessage(msg) {
-  const payload = JSON.stringify({
-    event: 'inboxMessage',
-    ts: Date.now(),
-    message: {
-      id: msg.id,
-      title: msg.title,
-      body: msg.body,
-      sender: msg.sender || null,
-      rank: msg.rank || null,
-      recipient: msg.recipient || null
-    }
-  });
-  for (const client of wsClients) {
-    if (client.readyState !== WebSocket.OPEN) continue;
-    if (msg.recipient && client.username !== msg.recipient) continue;
-    try { client.send(payload); } catch (e) {}
-  }
-}
-
-function broadcastProjectStatus(projectId, running) {
-  const payload = JSON.stringify({ event: 'status', projectId, running: !!running, ts: Date.now() });
-  const audience = projectAudience(projectId);
-  for (const client of wsClients) {
-    if (audience.includes(client.username) && client.readyState === WebSocket.OPEN) {
-      try { client.send(payload); } catch (e) {}
-    }
-  }
-}
-
-function forceKillProjectProcess(projectId) {
-  const proc = procs[projectId];
-  if (!proc) return false;
-  try { killProcessTree(proc, 'SIGKILL'); } catch (e) {}
-  try {
-    if (proc.pid) {
-      try { process.kill(proc.pid, 'SIGKILL'); } catch (e2) {}
-      try { process.kill(-proc.pid, 'SIGKILL'); } catch (e3) {}
-    }
-  } catch (e) {}
-  try { if (typeof proc.kill === 'function') proc.kill('SIGKILL'); } catch (e4) {}
-  delete procs[projectId];
-  return true;
 }
 
 wss.on('connection', (ws, req) => {
@@ -487,18 +410,10 @@ wss.on('connection', (ws, req) => {
   const user = verifyToken(token);
   if (!user) return ws.close();
   ws.username = user;
-  ws.isAlive = true;
   wsClients.add(ws);
-  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (msg) => {
     try {
       const data = JSON.parse(msg);
-      if (data.event === 'ping') {
-        if (ws.readyState === WebSocket.OPEN) {
-          try { ws.send(JSON.stringify({ event: 'pong', t: data.t || Date.now() })); } catch (e) {}
-        }
-        return;
-      }
       if (data.event === 'cmd' && data.projectId && procs[data.projectId]) {
         procs[data.projectId].stdin.write(data.cmd + '\n');
       }
@@ -520,7 +435,7 @@ wss.on('connection', (ws, req) => {
           }
           const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary --upgrade "${pkg}" --target ./modules` : `npm install --no-audit --no-fund --prefer-offline "${pkg}"`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 12 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 8 * 60 * 1000, maxBuffer: 1024 * 1024 * 30 }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
@@ -538,7 +453,7 @@ wss.on('connection', (ws, req) => {
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
           let pkgs = Array.isArray(data.pkgs) ? data.pkgs : [];
           let scanned = [];
-          try { scanned = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) { console.error('[DEPS] Scan error:', e); }
+          try { scanned = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) {}
           const merged = new Set();
           pkgs.concat(scanned).forEach((pk) => {
             const safe = sanitizePkgName(pk);
@@ -575,7 +490,7 @@ wss.on('connection', (ws, req) => {
           }
           const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary --upgrade -r requirements.txt --target ./modules` : `npm install --no-audit --no-fund --prefer-offline --no-package-lock`;
           broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 25 * 60 * 1000, maxBuffer: 1024 * 1024 * 100 }, (err, stdout, stderr) => {
+          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
             if (stdout) broadcastLog(user, p.id, stdout, 'info');
             if (stderr) broadcastLog(user, p.id, stderr, 'warn');
             if (err) {
@@ -591,189 +506,10 @@ wss.on('connection', (ws, req) => {
           });
         }
       }
-      if (data.event === 'terminalCommand' && data.projectId) {
-        const uObj = db.users.find(u => u.username === user);
-        if (!uObj) return;
-        const p = uObj.projects.find(x => String(x.id) === String(data.projectId));
-        if (p) {
-          const pDir = path.join(PROJECTS_DIR, String(p.id));
-          if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-          const cmd = String(data.command || '').trim();
-          if (!cmd) return;
-          
-          const broadcastTerminal = (msg, type = 'info') => {
-            broadcastEvent(user, { event: 'terminalOutput', projectId: p.id, msg, type });
-          };
-          
-          const parts = cmd.split(/\s+/).filter(s => s);
-          const command = parts[0].toLowerCase();
-          const args = parts.slice(1);
-          
-          if (command === 'help') {
-            broadcastTerminal('Available commands:', 'info');
-            broadcastTerminal('  help - Show this help message', 'info');
-            broadcastTerminal('  delete <folder> - Delete a folder in the project', 'info');
-            broadcastTerminal('  mkdir <folder> - Create a new folder', 'info');
-            broadcastTerminal('  ls - List files and folders', 'info');
-            broadcastTerminal('  pip install <package> - Install Python package', 'info');
-            broadcastTerminal('  pip install -r requirements.txt - Install from requirements.txt', 'info');
-            broadcastTerminal('  npm install <package> - Install Node.js package', 'info');
-            broadcastTerminal('  npm install - Install all dependencies from package.json', 'info');
-            broadcastTerminal('  python <file> - Run a Python file', 'info');
-            broadcastTerminal('  node <file> - Run a Node.js file', 'info');
-            broadcastTerminal('  clear - Clear terminal output', 'info');
-          } else if (command === 'clear') {
-            broadcastTerminal('Terminal cleared', 'info');
-          } else if (command === 'ls') {
-            try {
-              const items = fs.readdirSync(pDir, { withFileTypes: true });
-              const output = items.map(item => {
-                const suffix = item.isDirectory() ? '/' : '';
-                return item.name + suffix;
-              }).join('  ');
-              broadcastTerminal(output || 'Empty directory', 'info');
-            } catch (e) {
-              broadcastTerminal('Error listing directory: ' + e.message, 'err');
-            }
-          } else if (command === 'mkdir' && args.length > 0) {
-            const folderName = args[0];
-            try {
-              const target = safeJoin(pDir, folderName);
-              if (target) {
-                fs.mkdirSync(target, { recursive: true });
-                broadcastTerminal('Created folder: ' + folderName, 'ok');
-              } else {
-                broadcastTerminal('Invalid folder name', 'err');
-              }
-            } catch (e) {
-              broadcastTerminal('Error creating folder: ' + e.message, 'err');
-            }
-          } else if (command === 'delete' && args.length > 0) {
-            const targetName = args[0];
-            try {
-              const target = safeJoin(pDir, targetName);
-              if (target && fs.existsSync(target)) {
-                fs.rmSync(target, { recursive: true, force: true });
-                broadcastTerminal('Deleted: ' + targetName, 'ok');
-                
-                if (p.files) {
-                  const deletedKeys = Object.keys(p.files).filter(k => k.startsWith(targetName));
-                  deletedKeys.forEach(k => delete p.files[k]);
-                  if (deletedKeys.length > 0) saveDB();
-                }
-              } else {
-                broadcastTerminal('Path not found: ' + targetName, 'err');
-              }
-            } catch (e) {
-              broadcastTerminal('Error deleting: ' + e.message, 'err');
-            }
-          } else if (command === 'pip' && args.length > 0) {
-            if (p.lang !== 'Python') {
-              broadcastTerminal('pip commands are only available for Python projects', 'err');
-              return;
-            }
-            const modulesDir = path.join(pDir, 'modules');
-            if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
-            
-            let pipCmd = 'pip ' + args.join(' ');
-            if (pipCmd.includes('install') && !pipCmd.includes('--target')) {
-              pipCmd += ' --target ./modules --no-cache-dir';
-            }
-            
-            broadcastTerminal('Running: ' + pipCmd, 'info');
-            cp.exec(pipCmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
-              if (stdout) broadcastTerminal(stdout, 'info');
-              if (stderr) broadcastTerminal(stderr, 'warn');
-              if (err) {
-                broadcastTerminal('Command failed: ' + err.message, 'err');
-              } else {
-                broadcastTerminal('Command completed successfully', 'ok');
-              }
-            });
-          } else if (command === 'npm' && args.length > 0) {
-            if (p.lang === 'Python') {
-              broadcastTerminal('npm commands are only available for Node.js projects', 'err');
-              return;
-            }
-            
-            let npmCmd = 'npm ' + args.join(' ');
-            broadcastTerminal('Running: ' + npmCmd, 'info');
-            cp.exec(npmCmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
-              if (stdout) broadcastTerminal(stdout, 'info');
-              if (stderr) broadcastTerminal(stderr, 'warn');
-              if (err) {
-                broadcastTerminal('Command failed: ' + err.message, 'err');
-              } else {
-                broadcastTerminal('Command completed successfully', 'ok');
-              }
-            });
-          } else if (command === 'python' || command === 'python3') {
-            if (p.lang !== 'Python') {
-              broadcastTerminal('python commands are only available for Python projects', 'err');
-              return;
-            }
-            if (args.length === 0) {
-              broadcastTerminal('Usage: python <filename>', 'err');
-              return;
-            }
-            const modulesDir = path.join(pDir, 'modules');
-            const envVars = { ...process.env, PYTHONPATH: modulesDir };
-            const pythonCmd = 'python3 ' + args.join(' ');
-            broadcastTerminal('Running: ' + pythonCmd, 'info');
-            cp.exec(pythonCmd, { cwd: pDir, shell: true, env: envVars, timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
-              if (stdout) broadcastTerminal(stdout, 'info');
-              if (stderr) broadcastTerminal(stderr, 'warn');
-              if (err) {
-                broadcastTerminal('Command failed: ' + err.message, 'err');
-              } else {
-                broadcastTerminal('Command completed successfully', 'ok');
-              }
-            });
-          } else if (command === 'node') {
-            if (p.lang === 'Python') {
-              broadcastTerminal('node commands are only available for Node.js projects', 'err');
-              return;
-            }
-            if (args.length === 0) {
-              broadcastTerminal('Usage: node <filename>', 'err');
-              return;
-            }
-            const nodeCmd = 'node ' + args.join(' ');
-            broadcastTerminal('Running: ' + nodeCmd, 'info');
-            cp.exec(nodeCmd, { cwd: pDir, shell: true, timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
-              if (stdout) broadcastTerminal(stdout, 'info');
-              if (stderr) broadcastTerminal(stderr, 'warn');
-              if (err) {
-                broadcastTerminal('Command failed: ' + err.message, 'err');
-              } else {
-                broadcastTerminal('Command completed successfully', 'ok');
-              }
-            });
-          } else {
-            broadcastTerminal('Unknown command: ' + command + '. Type "help" for available commands.', 'err');
-          }
-        }
-      }
     } catch (e) {}
   });
   ws.on('close', () => wsClients.delete(ws));
-  ws.on('error', () => { try { wsClients.delete(ws); } catch (e) {} });
 });
-
-const wsHeartbeatInterval = setInterval(() => {
-  for (const client of wsClients) {
-    if (client.isAlive === false) {
-      try { client.terminate(); } catch (e) {}
-      wsClients.delete(client);
-      continue;
-    }
-    client.isAlive = false;
-    try { client.ping(); } catch (e) {
-      try { client.terminate(); } catch (e2) {}
-      wsClients.delete(client);
-    }
-  }
-}, 20000);
 
 app.use(express.static(__dirname, { index: false }));
 
@@ -828,7 +564,7 @@ app.post('/register', async (req, res) => {
   db.users.push({ username, password: hashedPassword, invite: code, discordUsername: username, projects: [], admin: false });
   delete db.inviteCodes[code];
   db.inboxMessages = db.inboxMessages || [];
-  const welcomeMsg = {
+  db.inboxMessages.unshift({
     id: Date.now(),
     title: 'Welcome to reboot world!',
     body: 'this is a website where you can host your discord bots, and soon own minecraft world. Please follow ALL of the rules from the discord server.',
@@ -839,10 +575,8 @@ app.post('/register', async (req, res) => {
     sender: 'Reboot Cord',
     rank: 'notice',
     recipient: username
-  };
-  db.inboxMessages.unshift(welcomeMsg);
+  });
   saveDB();
-  broadcastInboxMessage(welcomeMsg);
   setCookie(res, signToken(username));
   res.json({ success: true, username });
 });
@@ -885,20 +619,7 @@ app.post('/api/projects', (req, res) => {
   if (!u) return res.json({ success: false });
   const user = db.users.find(x => x.username === u);
   if (!user) return res.json({ success: false });
-  const incoming = Array.isArray(req.body.projects) ? req.body.projects : [];
-  const keepIds = new Set(incoming.map(p => String(p.id)));
-  const previous = user.projects || [];
-  previous.forEach(oldP => {
-    if (!keepIds.has(String(oldP.id))) {
-      forceKillProjectProcess(oldP.id);
-      broadcastProjectStatus(oldP.id, false);
-      try {
-        const pDir = path.join(PROJECTS_DIR, String(oldP.id));
-        if (fs.existsSync(pDir)) fs.rmSync(pDir, { recursive: true, force: true });
-      } catch (e) {}
-    }
-  });
-  user.projects = incoming;
+  user.projects = req.body.projects || [];
   db.mcPorts = db.mcPorts || 25565;
   user.projects.forEach(p => {
     if (p.type === 'minecraft' && !p.port) {
@@ -923,27 +644,30 @@ app.post('/api/projects', (req, res) => {
 app.post('/api/projects/:id/delete', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const id = req.params.id;
-  const p = (user.projects || []).find(x => String(x.id) === String(id));
-  if (!p) return res.json({ success: false, message: 'Project not found.' });
-  forceKillProjectProcess(id);
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !access.isOwner) return res.json({ success: false });
+  const members = projectMemberUsernames(access);
+
+  if (procs[p.id]) {
+    killProcessTree(procs[p.id], 'SIGKILL');
+    delete procs[p.id];
+  }
   p.running = false;
-  broadcastProjectStatus(id, false);
-  broadcastLog(u, id, '[System] Project deleted — process force killed and shut down.', 'warn');
-  (p.shared || []).forEach(s => {
-    if (s && s.username) {
-      broadcastEvent(s.username, { event: 'removedFromProject', projectId: id, projectName: p.name });
-      delete unlockedAccess[s.username + '::' + id];
-    }
-  });
-  user.projects = (user.projects || []).filter(x => String(x.id) !== String(id));
+
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
   try {
-    const pDir = path.join(PROJECTS_DIR, String(id));
     if (fs.existsSync(pDir)) fs.rmSync(pDir, { recursive: true, force: true });
   } catch (e) {}
+
+  const owner = db.users.find(x => x.username === u);
+  if (owner) owner.projects = (owner.projects || []).filter(x => String(x.id) !== String(p.id));
   saveDB();
+
+  broadcastToMembers(members, { event: 'log', projectId: p.id, msg: '[System] Project deleted by owner.', type: 'err' });
+  broadcastToMembers(members, { event: 'statusChange', projectId: p.id, running: false });
+  (p.shared || []).forEach(s => broadcastEvent(s.username, { event: 'removedFromProject', projectId: p.id, projectName: p.name }));
+
   res.json({ success: true });
 });
 
@@ -960,9 +684,9 @@ app.get('/api/projects/:id/access', (req, res) => {
     perms: access.perms,
     locked: access.locked,
     hasPassword: !!access.p.password,
-    password: access.isOwner ? (access.p.password || '') : '',
     private: !!access.p.private,
     name: access.p.name,
+    password: access.isOwner ? (access.p.password || '') : undefined,
     shared: access.isOwner ? (access.p.shared || []).map(s => ({ username: s.username, perms: s.perms })) : []
   });
 });
@@ -995,10 +719,6 @@ app.post('/api/projects/:id/share', (req, res) => {
   p.shared = p.shared || [];
   if (p.shared.find(x => x.username === targetUser.username)) return res.json({ success: false, message: 'Already shared with that user.' });
   p.shared.push({ username: targetUser.username, perms: { editFiles: false, changeName: false, fullAccess: false } });
-  p.shareAddCounts = p.shareAddCounts || {};
-  const addKey = targetUser.username.toLowerCase();
-  p.shareAddCounts[addKey] = (Number(p.shareAddCounts[addKey]) || 0) + 1;
-  const addCount = p.shareAddCounts[addKey];
   db.shareInvites = db.shareInvites || [];
   db.shareInvites.push({
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
@@ -1010,24 +730,17 @@ app.post('/api/projects/:id/share', (req, res) => {
     seen: false
   });
   db.inboxMessages = db.inboxMessages || [];
-  let addBody = `${u} has added you to their ${p.name} project.`;
-  if (addCount >= 2) {
-    addBody = `${u} has added you to their ${p.name} project once again. (${addCount}x)`;
-  }
-  const addedMsg = {
+  db.inboxMessages.unshift({
     id: Date.now(),
     title: `Added to "${p.name}"`,
-    body: addBody,
+    body: `${u} has added you to their ${p.name} project.`,
     ts: Date.now(),
     readBy: [],
     sender: u,
     rank: 'notice',
-    recipient: targetUser.username,
-    addCount: addCount
-  };
-  db.inboxMessages.unshift(addedMsg);
+    recipient: targetUser.username
+  });
   saveDB();
-  broadcastInboxMessage(addedMsg);
   broadcastEvent(targetUser.username, { event: 'addedToProject', projectId: p.id, projectName: p.name });
   res.json({ success: true, shared: p.shared });
 });
@@ -1060,18 +773,17 @@ app.post('/api/projects/:id/unshare', (req, res) => {
   delete unlockedAccess[removedUser + '::' + req.params.id];
   if (wasShared) {
     db.inboxMessages = db.inboxMessages || [];
-    const removedMsg = {
+    db.inboxMessages.unshift({
       id: Date.now(),
       title: `Removed from "${p.name}"`,
       body: `${user.username} has removed you from their project.`,
       ts: Date.now(),
       readBy: [],
       sender: user.username,
-      rank: 'removed',
+      rank: 'notice',
+      variant: 'danger',
       recipient: removedUser
-    };
-    db.inboxMessages.unshift(removedMsg);
-    broadcastInboxMessage(removedMsg);
+    });
   }
   saveDB();
   if (wasShared) broadcastEvent(removedUser, { event: 'removedFromProject', projectId: p.id, projectName: p.name });
@@ -1153,6 +865,7 @@ app.get('/api/inbox', (req, res) => {
       read: (m.readBy || []).includes(u),
       sender: m.sender,
       rank: m.rank,
+      variant: m.variant,
       linkText: m.linkText,
       linkUrl: m.linkUrl
     }));
@@ -1187,10 +900,8 @@ app.post('/api/inbox/send', (req, res) => {
   const body = (req.body.body || '').trim();
   if (!title || !body) return res.json({ success: false });
   db.inboxMessages = db.inboxMessages || [];
-  const adminMsg = { id: Date.now(), title, body, ts: Date.now(), readBy: [], sender: u, rank: 'staff' };
-  db.inboxMessages.unshift(adminMsg);
+  db.inboxMessages.unshift({ id: Date.now(), title, body, ts: Date.now(), readBy: [] });
   saveDB();
-  broadcastInboxMessage(adminMsg);
   res.json({ success: true });
 });
 
@@ -1199,10 +910,8 @@ app.post('/api/inbox/discord', (req, res) => {
   const sender = (req.body.sender || 'Staff').trim();
   if (!message) return res.json({ success: false });
   db.inboxMessages = db.inboxMessages || [];
-  const staffMsg = { id: Date.now(), title: `Message from ${sender}`, body: message, ts: Date.now(), readBy: [], sender, rank: 'staff' };
-  db.inboxMessages.unshift(staffMsg);
+  db.inboxMessages.unshift({ id: Date.now(), title: `Message from ${sender}`, body: message, ts: Date.now(), readBy: [], sender, rank: 'staff' });
   saveDB();
-  broadcastInboxMessage(staffMsg);
   res.json({ success: true });
 });
 
@@ -1361,32 +1070,8 @@ app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
     p.files[relPath] = bufferToStoredString(buf);
     saveDB();
     broadcastLog(u, p.id, '[System] Uploaded ' + relPath, 'info');
-    
-    if (relPath.endsWith('.py') || relPath.endsWith('.js') || relPath.endsWith('.ts') || relPath.endsWith('.mjs') || relPath.endsWith('.cjs')) {
-      try {
-        const detectedDeps = scanProjectDeps(pDir, p.lang || 'Python');
-        if (detectedDeps && detectedDeps.length > 0) {
-          const missing = detectedDeps.filter(dep => {
-            const modulesDir = path.join(pDir, p.lang === 'Python' ? 'modules' : 'node_modules');
-            if (!fs.existsSync(modulesDir)) return true;
-            if (p.lang === 'Python') {
-              return !fs.existsSync(path.join(modulesDir, dep));
-            } else {
-              return !fs.existsSync(path.join(modulesDir, dep));
-            }
-          });
-          if (missing.length > 0) {
-            broadcastEvent(u, { event: 'missingPackages', projectId: p.id, packages: missing });
-          }
-        }
-      } catch (e) {
-        console.error('[UPLOAD] Dep scan error:', e);
-      }
-    }
-    
     res.json({ success: true, path: relPath });
   } catch (e) {
-    console.error('[UPLOAD] Error:', e);
     try { if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch(e2) {}
     res.json({ success: false });
   }
@@ -1493,7 +1178,170 @@ app.post('/api/projects/:id/revert', (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/api/projects/:id/start', async (req, res) => {
+const termProcs = {};
+
+function tokenizeCommand(str) {
+  const out = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m;
+  while ((m = re.exec(str))) out.push(m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3]));
+  return out;
+}
+
+const TERMINAL_HELP = [
+  'Available commands:',
+  'help - shows all available commands',
+  'ls [path] - list files and folders in the project directory',
+  'mkdir <name> - create a new folder',
+  'delete <name> - delete a file or folder',
+  'pip install <package...> - install python packages',
+  'pip install -r requirements.txt - install from requirements.txt',
+  'npm install [package...] - install node packages (no args installs all dependencies)',
+  'python <file> [args...] - run a python file',
+  'node <file> [args...] - run a node file',
+  'clear - clear the terminal output'
+].join('\n');
+
+function runStreamedCommand(username, projectId, bin, args, cwd) {
+  let proc;
+  try {
+    proc = cp.spawn(bin, args, { cwd, shell: false });
+  } catch (e) {
+    broadcastEvent(username, { event: 'terminalOutput', projectId, line: 'Error: ' + e.message });
+    broadcastEvent(username, { event: 'terminalDone', projectId });
+    return;
+  }
+  termProcs[projectId] = termProcs[projectId] || [];
+  termProcs[projectId].push(proc);
+  proc.on('error', (err) => {
+    broadcastEvent(username, { event: 'terminalOutput', projectId, line: 'Error: ' + err.message });
+    broadcastEvent(username, { event: 'terminalDone', projectId });
+  });
+  proc.stdout.on('data', d => {
+    d.toString().split('\n').forEach(line => { if (line.trim()) broadcastEvent(username, { event: 'terminalOutput', projectId, line }); });
+  });
+  proc.stderr.on('data', d => {
+    d.toString().split('\n').forEach(line => { if (line.trim()) broadcastEvent(username, { event: 'terminalOutput', projectId, line }); });
+  });
+  proc.on('close', (code) => {
+    termProcs[projectId] = (termProcs[projectId] || []).filter(x => x !== proc);
+    broadcastEvent(username, { event: 'terminalOutput', projectId, line: 'Process exited with code ' + code });
+    broadcastEvent(username, { event: 'terminalDone', projectId });
+  });
+}
+
+app.post('/api/projects/:id/terminal', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false, output: 'Not authenticated.' });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canControl(access)) return res.json({ success: false, output: 'Access denied.' });
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+
+  const raw = String(req.body.command || '').trim();
+  if (!raw) return res.json({ success: true, output: '' });
+  const tokens = tokenizeCommand(raw);
+  const cmd = (tokens[0] || '').toLowerCase();
+  const args = tokens.slice(1);
+
+  if (cmd === 'help') return res.json({ success: true, output: TERMINAL_HELP });
+  if (cmd === 'clear') return res.json({ success: true, output: '' });
+
+  if (cmd === 'ls') {
+    const target = args[0] ? safeJoin(pDir, args[0]) : pDir;
+    if (!target || !fs.existsSync(target)) return res.json({ success: false, output: 'No such directory: ' + (args[0] || '.') });
+    try {
+      const entries = fs.readdirSync(target, { withFileTypes: true });
+      if (!entries.length) return res.json({ success: true, output: '(empty directory)' });
+      const lines = entries.map(e => e.isDirectory() ? (e.name + '/') : e.name);
+      return res.json({ success: true, output: lines.join('\n') });
+    } catch (e) { return res.json({ success: false, output: 'Error: ' + e.message }); }
+  }
+
+  if (cmd === 'mkdir') {
+    if (!canEditFiles(access)) return res.json({ success: false, output: 'Permission denied.' });
+    if (!args[0]) return res.json({ success: false, output: 'Usage: mkdir <name>' });
+    const target = safeJoin(pDir, args[0]);
+    if (!target) return res.json({ success: false, output: 'Invalid path.' });
+    try {
+      fs.mkdirSync(target, { recursive: true });
+      broadcastEvent(u, { event: 'terminalFsChange', projectId: p.id });
+      return res.json({ success: true, output: 'Created folder: ' + args[0] });
+    } catch (e) { return res.json({ success: false, output: 'Error: ' + e.message }); }
+  }
+
+  if (cmd === 'delete') {
+    if (!canEditFiles(access)) return res.json({ success: false, output: 'Permission denied.' });
+    if (!args[0]) return res.json({ success: false, output: 'Usage: delete <name>' });
+    const target = safeJoin(pDir, args[0]);
+    if (!target || target === pDir) return res.json({ success: false, output: 'Invalid path.' });
+    if (!fs.existsSync(target)) return res.json({ success: false, output: 'No such file or folder: ' + args[0] });
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      if (p.files) {
+        Object.keys(p.files).forEach(k => {
+          if (k === args[0] || k.indexOf(args[0] + '/') === 0) delete p.files[k];
+        });
+      }
+      saveDB();
+      broadcastEvent(u, { event: 'terminalFsChange', projectId: p.id, deleted: args[0] });
+      return res.json({ success: true, output: 'Deleted: ' + args[0] });
+    } catch (e) { return res.json({ success: false, output: 'Error: ' + e.message }); }
+  }
+
+  if (cmd === 'pip' && args[0] === 'install') {
+    if (!canEditFiles(access)) return res.json({ success: false, output: 'Permission denied.' });
+    const modulesDir = path.join(pDir, 'modules');
+    if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
+    let pipArgs;
+    if (args[1] === '-r') {
+      const reqPath = safeJoin(pDir, args[2] || 'requirements.txt');
+      if (!reqPath || !fs.existsSync(reqPath)) return res.json({ success: false, output: 'requirements.txt not found.' });
+      pipArgs = ['install', '--target', modulesDir, '-r', reqPath];
+    } else {
+      const pkgs = args.slice(1);
+      if (!pkgs.length) return res.json({ success: false, output: 'Usage: pip install <package...>' });
+      pipArgs = ['install', '--target', modulesDir].concat(pkgs);
+    }
+    res.json({ success: true, streaming: true });
+    runStreamedCommand(u, p.id, 'pip3', pipArgs, pDir);
+    return;
+  }
+
+  if (cmd === 'npm' && args[0] === 'install') {
+    if (!canEditFiles(access)) return res.json({ success: false, output: 'Permission denied.' });
+    const npmArgs = ['install'].concat(args.slice(1));
+    res.json({ success: true, streaming: true });
+    runStreamedCommand(u, p.id, 'npm', npmArgs, pDir);
+    return;
+  }
+
+  if (cmd === 'python' || cmd === 'node') {
+    if (!canControl(access)) return res.json({ success: false, output: 'Permission denied.' });
+    if (!args[0]) return res.json({ success: false, output: 'Usage: ' + cmd + ' <file> [args...]' });
+    const target = safeJoin(pDir, args[0]);
+    if (!target || !fs.existsSync(target)) return res.json({ success: false, output: 'No such file: ' + args[0] });
+    res.json({ success: true, streaming: true });
+    const bin = cmd === 'python' ? 'python3' : 'node';
+    runStreamedCommand(u, p.id, bin, [args[0]].concat(args.slice(1)), pDir);
+    return;
+  }
+
+  return res.json({ success: false, output: 'Unknown command: ' + cmd + '. Type "help" for a list of commands.' });
+});
+
+function projectMemberUsernames(access) {
+  const names = access.owner ? [access.owner.username] : [];
+  (access.p.shared || []).forEach(s => { if (!names.includes(s.username)) names.push(s.username); });
+  return names;
+}
+
+function broadcastToMembers(members, payload) {
+  members.forEach(m => broadcastEvent(m, payload));
+}
+
+async function startProjectHandler(req, res) {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
   const access = getAccess(u, req.params.id);
@@ -1501,16 +1349,21 @@ app.post('/api/projects/:id/start', async (req, res) => {
   if (!p || !canControl(access)) return res.json({ success: false });
   if (access.locked) return res.json({ success: false, needsPassword: true });
 
+  const members = projectMemberUsernames(access);
+  function logAll(msg, type) { broadcastToMembers(members, { event: 'log', projectId: p.id, msg, type: type || 'info' }); }
+  function statusAll(running) { broadcastToMembers(members, { event: 'statusChange', projectId: p.id, running }); }
+
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
 
   if (procs[p.id]) {
-    forceKillProjectProcess(p.id);
+    killProcessTree(procs[p.id], 'SIGKILL');
+    delete procs[p.id];
   }
 
   p.running = true;
   saveDB();
-  broadcastProjectStatus(p.id, true);
+  statusAll(true);
 
   if (p.type === 'minecraft') {
     let javaCmd = 'java';
@@ -1520,13 +1373,13 @@ app.post('/api/projects/:id/start', async (req, res) => {
       const jreDir = path.join(PROJECTS_DIR, 'jre');
       const jreBin = path.join(jreDir, 'bin', 'java');
       if (!fs.existsSync(jreBin)) {
-        broadcastLog(u, p.id, '[System] Java not found locally. Downloading portable JRE...', 'sys');
+        logAll('[System] Java not found locally. Downloading portable JRE...', 'sys');
         try {
           await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR, shell: true });
           await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR, shell: true });
-          broadcastLog(u, p.id, '[System] JRE downloaded successfully.', 'ok');
+          logAll('[System] JRE downloaded successfully.', 'ok');
         } catch (err) {
-          broadcastLog(u, p.id, '[System] Failed to download JRE: ' + err.message, 'err');
+          logAll('[System] Failed to download JRE: ' + err.message, 'err');
         }
       }
       javaCmd = fs.existsSync(jreBin) ? jreBin : 'java';
@@ -1539,7 +1392,7 @@ app.post('/api/projects/:id/start', async (req, res) => {
     
     const jarPath = path.join(pDir, 'server.jar');
     if (!fs.existsSync(jarPath)) {
-      broadcastLog(u, p.id, '[System] Downloading Minecraft server for ' + (p.serverType || 'Vanilla') + ' ' + (p.version || '1.21.5') + '...', 'sys');
+      logAll('[System] Downloading Minecraft server for ' + (p.serverType || 'Vanilla') + ' ' + (p.version || '1.21.5') + '...', 'sys');
       try {
         if (p.serverType === 'Paper') {
           const apiBase = 'https://api.papermc.io/v2/projects/paper';
@@ -1559,47 +1412,41 @@ app.post('/api/projects/:id/start', async (req, res) => {
             await execAsync('curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar', { cwd: pDir, shell: true });
           }
         }
-        broadcastLog(u, p.id, '[System] Download complete.', 'ok');
+        logAll('[System] Download complete.', 'ok');
       } catch (e) {
-        broadcastLog(u, p.id, '[System] Failed to download server jar: ' + e.message, 'err');
+        logAll('[System] Failed to download server jar: ' + e.message, 'err');
       }
     }
     if (!fs.existsSync(jarPath)) {
-      broadcastLog(u, p.id, '[System] No server.jar found. Use Files tab to upload the correct server jar for this type/version, then Start again.', 'warn');
+      logAll('[System] No server.jar found. Use Files tab to upload the correct server jar for this type/version, then Start again.', 'warn');
     }
     const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true, detached: true });
     procs[p.id] = proc;
 
     proc.on('error', (err) => {
-      broadcastLog(u, p.id, `[System] Server failed to start: ${err.message}`, 'err');
+      logAll(`[System] Server failed to start: ${err.message}`, 'err');
     });
     
     proc.stdout.on('data', d => {
       d.toString().split('\n').forEach(line => {
         if (!line.trim()) return;
-        broadcastLog(u, p.id, line.trim(), 'server');
+        logAll(line.trim(), 'server');
         if (line.includes('Preparing level')) {
-          broadcastLog(u, p.id, '[System] World created', 'ok');
+          logAll('[System] World created', 'ok');
         }
         if (line.includes('Done (')) {
-          broadcastLog(u, p.id, `[System] your ${p.ip || 'play.server.net'}:${p.port} has successfully started`, 'ok');
+          logAll(`[System] your ${p.ip || 'play.server.net'}:${p.port} has successfully started`, 'ok');
         }
       });
     });
     
     proc.stderr.on('data', d => {
       d.toString().split('\n').forEach(line => {
-        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'warn');
+        if (line.trim()) logAll(line.trim(), 'warn');
       });
     });
     
-    proc.on('close', () => {
-      if (procs[p.id] === proc) delete procs[p.id];
-      p.running = false;
-      saveDB();
-      broadcastProjectStatus(p.id, false);
-      broadcastLog(u, p.id, '[System] Process exited.', 'sys');
-    });
+    proc.on('close', () => { if (procs[p.id] === proc) delete procs[p.id]; p.running = false; saveDB(); logAll('[System] Process exited.', 'sys'); statusAll(false); });
 
   } else {
     if (p.files) {
@@ -1611,27 +1458,6 @@ app.post('/api/projects/:id/start', async (req, res) => {
         fs.writeFileSync(filePath, storedStringToBuffer(p.files[fname]));
       }
     }
-    
-    try {
-      const detectedDeps = scanProjectDeps(pDir, p.lang || 'Python');
-      if (detectedDeps && detectedDeps.length > 0) {
-        const modulesDir = path.join(pDir, p.lang === 'Python' ? 'modules' : 'node_modules');
-        const missing = detectedDeps.filter(dep => {
-          if (!fs.existsSync(modulesDir)) return true;
-          if (p.lang === 'Python') {
-            return !fs.existsSync(path.join(modulesDir, dep));
-          } else {
-            return !fs.existsSync(path.join(modulesDir, dep));
-          }
-        });
-        if (missing.length > 0) {
-          broadcastLog(u, p.id, `[System] Detected missing dependencies: ${missing.join(', ')}`, 'warn');
-        }
-      }
-    } catch (e) {
-      console.error('[START] Dep scan error:', e);
-    }
-    
     const mainFile = Object.keys(p.files || {})[0] || (p.lang === 'Python' ? 'main.py' : 'index.js');
 
     const envVars = { ...process.env, BOT_TOKEN: p.botToken || '', TOKEN: p.botToken || '' };
@@ -1663,23 +1489,12 @@ app.post('/api/projects/:id/start', async (req, res) => {
     const proc = cp.spawn(cmd, args, { cwd: pDir, env: envVars, shell: p.lang === 'Python' ? false : true, detached: true });
     procs[p.id] = proc;
     let missingPkgs = new Set();
-    proc.on('error', (err) => {
-      broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err');
-      p.running = false;
-      saveDB();
-      broadcastProjectStatus(p.id, false);
-    });
-    proc.on('close', (code) => {
-      if (procs[p.id] === proc) delete procs[p.id];
-      p.running = false;
-      saveDB();
-      broadcastProjectStatus(p.id, false);
-      broadcastLog(u, p.id, '[System] Process exited ('+code+').', 'sys');
-    });
+    proc.on('error', (err) => { logAll(`[System] Bot failed to start: ${err.message}`, 'err'); p.running = false; saveDB(); statusAll(false); });
+    proc.on('close', (code) => { if (procs[p.id] === proc) delete procs[p.id]; p.running = false; saveDB(); logAll('[System] Process exited ('+code+').', 'sys'); statusAll(false); });
 
     proc.stdout.on('data', d => {
       d.toString().split('\n').forEach(line => {
-        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'info');
+        if (line.trim()) logAll(line.trim(), 'info');
       });
     });
     
@@ -1687,9 +1502,9 @@ app.post('/api/projects/:id/start', async (req, res) => {
       d.toString().split('\n').forEach(line => {
         if (!line.trim()) return;
         if (line.includes('INFO') || line.includes('discord.gateway') || line.includes('discord.client') || line.includes('Logged in as')) {
-          broadcastLog(u, p.id, line.trim(), 'ok');
+          logAll(line.trim(), 'ok');
         } else {
-          broadcastLog(u, p.id, line.trim(), 'err');
+          logAll(line.trim(), 'err');
           const match = line.match(/ModuleNotFoundError: No module named '([^']+)'/);
           if (match && match[1]) {
             missingPkgs.add(match[1]);
@@ -1701,15 +1516,33 @@ app.post('/api/projects/:id/start', async (req, res) => {
   }
 
   res.json({ success: true });
+}
+
+app.post('/api/projects/:id/start', startProjectHandler);
+
+app.post('/api/projects/:id/restart', async (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const access = getAccess(u, req.params.id);
+  const p = access.p;
+  if (!p || !canControl(access)) return res.json({ success: false });
+  const members = projectMemberUsernames(access);
+  if (procs[p.id]) {
+    killProcessTree(procs[p.id], 'SIGKILL');
+    delete procs[p.id];
+  }
+  p.running = false;
+  saveDB();
+  broadcastToMembers(members, { event: 'log', projectId: p.id, msg: '[System] Restarting...', type: 'sys' });
+  broadcastToMembers(members, { event: 'statusChange', projectId: p.id, running: false });
+  await startProjectHandler(req, res);
 });
 
 function killProcessTree(proc, signal) {
-  if (!proc) return;
   try {
-    if (proc.pid) process.kill(-proc.pid, signal);
+    process.kill(-proc.pid, signal);
   } catch(e) {
-    try { if (proc.pid) process.kill(proc.pid, signal); } catch(e2) {}
-    try { proc.kill(signal); } catch(e3) {}
+    try { proc.kill(signal); } catch(e2) {}
   }
 }
 
@@ -1719,20 +1552,27 @@ app.post('/api/projects/:id/stop', (req, res) => {
   const access = getAccess(u, req.params.id);
   const p = access.p;
   if (!p || !canControl(access)) return res.json({ success: false });
+  const members = projectMemberUsernames(access);
 
-  const proc = procs[p.id];
-  if (proc) {
+  if (procs[p.id]) {
+    const proc = procs[p.id];
+    broadcastToMembers(members, { event: 'log', projectId: p.id, msg: '[System] Stopping process...', type: 'warn' });
     killProcessTree(proc, 'SIGTERM');
     setTimeout(() => {
       if (procs[p.id] === proc) {
-        forceKillProjectProcess(p.id);
+        killProcessTree(proc, 'SIGKILL');
+        delete procs[p.id];
+        p.running = false;
+        saveDB();
+        broadcastToMembers(members, { event: 'log', projectId: p.id, msg: '[System] Process did not exit gracefully, forced stop.', type: 'warn' });
+        broadcastToMembers(members, { event: 'statusChange', projectId: p.id, running: false });
       }
-    }, 1200);
+    }, 3000);
+  } else {
+    p.running = false;
+    saveDB();
+    broadcastToMembers(members, { event: 'statusChange', projectId: p.id, running: false });
   }
-  p.running = false;
-  saveDB();
-  broadcastProjectStatus(p.id, false);
-  broadcastLog(u, p.id, '[System] Process stopped.', 'warn');
   res.json({ success: true });
 });
 
@@ -1742,12 +1582,22 @@ app.post('/api/projects/:id/kill', (req, res) => {
   const access = getAccess(u, req.params.id);
   const p = access.p;
   if (!p || !canControl(access)) return res.json({ success: false });
+  const members = projectMemberUsernames(access);
 
-  forceKillProjectProcess(p.id);
+  if (procs[p.id]) {
+    const proc = procs[p.id];
+    killProcessTree(proc, 'SIGKILL');
+    delete procs[p.id];
+  }
+  if (termProcs[p.id]) {
+    termProcs[p.id].forEach(tp => { try { tp.kill('SIGKILL'); } catch (e) {} });
+    termProcs[p.id] = [];
+  }
+
   p.running = false;
   saveDB();
-  broadcastProjectStatus(p.id, false);
-  broadcastLog(u, p.id, '[System] Process forcefully killed.', 'warn');
+  broadcastToMembers(members, { event: 'log', projectId: p.id, msg: '[System] Process forcefully killed.', type: 'warn' });
+  broadcastToMembers(members, { event: 'statusChange', projectId: p.id, running: false });
   res.json({ success: true });
 });
 
@@ -1786,7 +1636,7 @@ app.post('/api/admin/set-admin', (req, res) => {
     target.admin = !!isAdmin;
     if (target.admin && !wasAdmin && !target.staffWelcomeSent) {
       db.inboxMessages = db.inboxMessages || [];
-      const staffWelcome = {
+      db.inboxMessages.unshift({
         id: Date.now(),
         title: 'Staff Team',
         body: 'Welcome ' + target.username + ' to the staff team!',
@@ -1795,9 +1645,7 @@ app.post('/api/admin/set-admin', (req, res) => {
         sender: 'System',
         rank: 'staff',
         recipient: target.username
-      };
-      db.inboxMessages.unshift(staffWelcome);
-      broadcastInboxMessage(staffWelcome);
+      });
       target.staffWelcomeSent = true;
     }
     saveDB();
@@ -1902,48 +1750,19 @@ function detectDeviceFromUA(uaRaw, hints) {
   let type = 'desktop';
   let os = 'unknown';
   let browser = 'unknown';
-  const touch = !!(hints.touch || (typeof hints.maxTouchPoints === 'number' && hints.maxTouchPoints > 0));
-  const mtp = typeof hints.maxTouchPoints === 'number' ? hints.maxTouchPoints : 0;
-  const w = typeof hints.screenWidth === 'number' ? hints.screenWidth : 0;
-  const h = typeof hints.screenHeight === 'number' ? hints.screenHeight : 0;
-  const vw = typeof hints.viewportWidth === 'number' ? hints.viewportWidth : 0;
-  const vh = typeof hints.viewportHeight === 'number' ? hints.viewportHeight : 0;
-  const minSide = w && h ? Math.min(w, h) : (w || h || 0);
-  const maxSide = w && h ? Math.max(w, h) : (w || h || 0);
-  const minViewport = vw && vh ? Math.min(vw, vh) : (vw || vh || 0);
-  const scores = { mobile: 0, tablet: 0, desktop: 0, tv: 0, console: 0, bot: 0 };
 
-  if (/bot|crawl|spider|slurp|bingpreview|headless|googlebot|bingbot|duckduckbot|baiduspider|yandexbot|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot/.test(ua)) scores.bot += 10;
-  if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s|crkey|roku/.test(ua)) scores.tv += 8;
-  if (/xbox|playstation|nintendo/.test(ua)) scores.console += 8;
-  if (/ipad/.test(ua)) scores.tablet += 6;
-  if (/iphone|ipod/.test(ua)) scores.mobile += 6;
-  if (/android/.test(ua) && /mobile/.test(ua)) scores.mobile += 5;
-  if (/android/.test(ua) && !/mobile/.test(ua)) scores.tablet += 5;
-  if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10|sm-t/.test(ua)) scores.tablet += 5;
-  if (/mobi|windows phone|blackberry|opera mini|iemobile|fennec/.test(ua)) scores.mobile += 4;
-  if (/macintosh/.test(ua) && (touch || mtp > 1)) scores.tablet += 5;
-  if (/windows nt|x11|cros|linux/.test(ua) && !touch) scores.desktop += 3;
+  if (/ipad/.test(ua) || (/macintosh/.test(ua) && hints.touch)) type = 'tablet';
+  else if (/tablet|kindle|silk|playbook/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) type = 'tablet';
+  else if (/mobi|iphone|ipod|android.*mobile|windows phone|blackberry|opera mini|iemobile/.test(ua)) type = 'mobile';
+  else if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s/.test(ua)) type = 'tv';
+  else if (/xbox|playstation|nintendo/.test(ua)) type = 'console';
+  else if (/bot|crawl|spider|slurp|bingpreview/.test(ua)) type = 'bot';
+  else type = 'desktop';
 
-  if (touch || mtp > 0) {
-    if (minSide > 0 && minSide < 600) scores.mobile += 3;
-    else if (minSide >= 600 && minSide < 1100) scores.tablet += 3;
-    else if (minSide >= 1100) scores.desktop += 1;
+  if (typeof hints.maxTouchPoints === 'number' && hints.maxTouchPoints > 0 && typeof hints.screenWidth === 'number') {
+    if (hints.screenWidth < 640 && type === 'desktop') type = 'mobile';
+    else if (hints.screenWidth < 1100 && type === 'desktop') type = 'tablet';
   }
-  if (minViewport > 0 && minViewport < 480) scores.mobile += 2;
-  if (minViewport >= 700 && minViewport <= 1180 && touch) scores.tablet += 1;
-  if (maxSide >= 1920 && minSide >= 1080 && !touch) scores.desktop += 2;
-
-  let best = -1;
-  for (const k of Object.keys(scores)) {
-    if (scores[k] > best) { best = scores[k]; type = k; }
-  }
-  if (best <= 0) type = 'desktop';
-
-  if (type === 'mobile' && minSide >= 768 && maxSide >= 1024 && !/iphone|ipod|android.*mobile/.test(ua)) type = 'tablet';
-  if (type === 'tablet' && minSide > 0 && minSide < 520 && /iphone|ipod|android.*mobile/.test(ua)) type = 'mobile';
-  if (type === 'desktop' && touch && minSide > 0 && minSide < 640) type = 'mobile';
-  if (type === 'desktop' && touch && minSide >= 640 && minSide < 1180) type = 'tablet';
 
   if (/windows nt/.test(ua)) os = 'windows';
   else if (/mac os x|macintosh/.test(ua)) os = 'macos';
@@ -1951,12 +1770,11 @@ function detectDeviceFromUA(uaRaw, hints) {
   else if (/iphone|ipad|ipod/.test(ua)) os = 'ios';
   else if (/cros/.test(ua)) os = 'chromeos';
   else if (/linux/.test(ua)) os = 'linux';
-  if (os === 'macos' && (touch || mtp > 1) && type !== 'desktop') os = 'ios';
 
   if (/edg\//.test(ua)) browser = 'edge';
-  else if (/samsungbrowser/.test(ua)) browser = 'samsung';
   else if (/opr\/|opera/.test(ua)) browser = 'opera';
-  else if (/chrome\//.test(ua) || /crios/.test(ua)) browser = 'chrome';
+  else if (/chrome\//.test(ua)) browser = 'chrome';
+  else if (/crios/.test(ua)) browser = 'chrome';
   else if (/fxios|firefox/.test(ua)) browser = 'firefox';
   else if (/safari/.test(ua)) browser = 'safari';
 
@@ -1969,10 +1787,7 @@ app.get('/api/v1/device', (req, res) => {
   const hints = {
     touch: req.query.touch === '1',
     maxTouchPoints: req.query.mtp ? parseInt(req.query.mtp, 10) : 0,
-    screenWidth: req.query.w ? parseInt(req.query.w, 10) : 0,
-    screenHeight: req.query.h ? parseInt(req.query.h, 10) : 0,
-    viewportWidth: req.query.vw ? parseInt(req.query.vw, 10) : 0,
-    viewportHeight: req.query.vh ? parseInt(req.query.vh, 10) : 0
+    screenWidth: req.query.w ? parseInt(req.query.w, 10) : 0
   };
   const info = detectDeviceFromUA(req.headers['user-agent'] || '', hints);
   res.json({ success: true, type: info.type, os: info.os, browser: info.browser });
