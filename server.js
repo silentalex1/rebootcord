@@ -25,6 +25,33 @@ process.on('unhandledRejection', (reason) => {
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
+
+const SDK_MIME = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.map': 'application/json; charset=utf-8' };
+function safeJoinSdk(base, name) {
+  const resolved = path.resolve(base, name);
+  if (!resolved.startsWith(path.resolve(base) + path.sep) && resolved !== path.resolve(base)) return null;
+  return resolved;
+}
+app.use('/sdk', (req, res, next) => {
+  const ext = path.extname(req.path).toLowerCase();
+  if (SDK_MIME[ext]) res.type(SDK_MIME[ext]);
+  res.setHeader('Cache-Control', 'no-cache');
+  next();
+}, express.static(path.join(__dirname, 'sdk'), {
+  setHeaders: (res, filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    if (SDK_MIME[ext]) res.setHeader('Content-Type', SDK_MIME[ext]);
+    res.setHeader('Cache-Control', 'no-cache');
+  }
+}));
+app.get('/sdk/:file', (req, res, next) => {
+  const target = safeJoinSdk(path.join(__dirname, 'sdk'), req.params.file);
+  if (!target || !fs.existsSync(target)) return next();
+  const ext = path.extname(target).toLowerCase();
+  if (SDK_MIME[ext]) res.type(SDK_MIME[ext]);
+  res.setHeader('Cache-Control', 'no-cache');
+  fs.createReadStream(target).pipe(res);
+});
 const DATA_DIR = process.env.RC_DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const TMP_UPLOAD_DIR = path.join(DATA_DIR, 'tmp-uploads');
@@ -478,7 +505,6 @@ wss.on('connection', (ws, req) => {
 });
 
 app.use(express.static(__dirname, { index: false }));
-app.use('/sdk', express.static(path.join(__dirname, 'sdk')));
 
 app.get('/', (req, res) => {
   if (getUser(req)) return res.redirect('/dashboard');
