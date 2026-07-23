@@ -4,6 +4,7 @@
   var STYLE_ID = 'rc-device-style';
   var STORE_KEY = 'rc_device_detected_type';
   var REFRESH_KEY = 'rc_device_refreshed';
+  var CHANGE_SCAN_KEY = 'rc_device_change_scanned';
 
   function injectStyles() {
     if (document.getElementById(STYLE_ID)) return;
@@ -54,15 +55,21 @@
     try { coarsePointer = window.matchMedia && window.matchMedia('(pointer:coarse)').matches; } catch (e) {}
     var noHover = false;
     try { noHover = window.matchMedia && window.matchMedia('(hover:none)').matches; } catch (e) {}
+    var finePointer = false;
+    try { finePointer = window.matchMedia && window.matchMedia('(pointer:fine)').matches; } catch (e) {}
     var w = window.screen && window.screen.width ? window.screen.width : window.innerWidth;
     var h = window.screen && window.screen.height ? window.screen.height : window.innerHeight;
+    var vw = window.innerWidth || w || 0;
+    var vh = window.innerHeight || h || 0;
     var minSide = Math.min(w || 0, h || 0);
     var maxSide = Math.max(w || 0, h || 0);
+    var minViewport = Math.min(vw || 0, vh || 0);
     var type = 'desktop';
+    var dpr = window.devicePixelRatio || 1;
 
     if (uaData && typeof uaData.mobile === 'boolean' && uaData.mobile) {
       type = maxSide >= 900 ? 'tablet' : 'mobile';
-    } else if (/ipad/.test(ua) || (/macintosh/.test(ua) && (touch || coarsePointer))) {
+    } else if (/ipad/.test(ua) || (/macintosh/.test(ua) && (touch || coarsePointer) && !finePointer)) {
       type = 'tablet';
     } else if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) {
       type = 'tablet';
@@ -81,8 +88,16 @@
     }
 
     if (type === 'desktop' && (touch || coarsePointer || noHover)) {
-      if (minSide && minSide < 640) type = 'mobile';
-      else if (minSide && minSide < 1180) type = 'tablet';
+      if ((minSide && minSide < 640) || (minViewport && minViewport < 640)) type = 'mobile';
+      else if ((minSide && minSide < 1180) || (minViewport && minViewport < 900)) type = 'tablet';
+    }
+
+    if (type === 'mobile' && minSide >= 768 && maxSide >= 1024 && !/iphone|ipod|android.*mobile/.test(ua)) {
+      type = 'tablet';
+    }
+
+    if (type === 'tablet' && minSide < 520 && /iphone|ipod|android.*mobile/.test(ua)) {
+      type = 'mobile';
     }
 
     var os = 'unknown';
@@ -93,6 +108,7 @@
       else if (plat.indexOf('android') !== -1) os = 'android';
       else if (plat.indexOf('chrome') !== -1) os = 'chromeos';
       else if (plat.indexOf('linux') !== -1) os = 'linux';
+      else if (plat.indexOf('ios') !== -1) os = 'ios';
     }
     if (os === 'unknown') {
       if (/windows nt/.test(ua)) os = 'windows';
@@ -122,17 +138,42 @@
     else if (/fxios|firefox/.test(ua)) browser = 'firefox';
     else if (/safari/.test(ua)) browser = 'safari';
 
-    return { type: type, os: os, browser: browser, touch: touch, screenWidth: w || 0, screenHeight: h || 0 };
+    return {
+      type: type,
+      os: os,
+      browser: browser,
+      touch: touch,
+      screenWidth: w || 0,
+      screenHeight: h || 0,
+      viewportWidth: vw || 0,
+      viewportHeight: vh || 0,
+      dpr: dpr
+    };
   }
 
   function verifyWithServer(apiKey, clientInfo, cb) {
     var base = (window.RebootDevice && window.RebootDevice._base) || 'https://rebootcord.world';
-    var qs = '?touch=' + (clientInfo.touch ? '1' : '0') + '&mtp=' + (navigator.maxTouchPoints || 0) + '&w=' + (clientInfo.screenWidth || 0);
+    var qs = '?touch=' + (clientInfo.touch ? '1' : '0') +
+      '&mtp=' + (navigator.maxTouchPoints || 0) +
+      '&w=' + (clientInfo.screenWidth || 0) +
+      '&h=' + (clientInfo.screenHeight || 0) +
+      '&vw=' + (clientInfo.viewportWidth || 0) +
+      '&vh=' + (clientInfo.viewportHeight || 0);
     if (typeof fetch !== 'function') { cb(clientInfo); return; }
     fetch(base + '/api/v1/device' + qs, { headers: { 'Authorization': apiKey } })
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        if (data && data.success) cb({ type: data.type, os: data.os, browser: data.browser });
+        if (data && data.success) cb({
+          type: data.type,
+          os: data.os,
+          browser: data.browser,
+          touch: clientInfo.touch,
+          screenWidth: clientInfo.screenWidth,
+          screenHeight: clientInfo.screenHeight,
+          viewportWidth: clientInfo.viewportWidth,
+          viewportHeight: clientInfo.viewportHeight,
+          dpr: clientInfo.dpr
+        });
         else cb(clientInfo);
       })
       .catch(function() { cb(clientInfo); });
@@ -146,6 +187,12 @@
     });
     el.classList.add('rc-device-' + type);
     el.setAttribute('data-rc-device', type);
+    try {
+      if (document.body) document.body.setAttribute('data-device', type);
+    } catch (e) {}
+    try {
+      window.dispatchEvent(new CustomEvent('rc-device-change', { detail: { type: type } }));
+    } catch (e2) {}
   }
 
   function label(type) {
@@ -196,7 +243,11 @@
       function doRefreshOnce() {
         if (refreshed) return;
         refreshed = true;
-        try { sessionStorage.setItem(STORE_KEY, info.type); sessionStorage.setItem(REFRESH_KEY, '1'); } catch (e) {}
+        try {
+          sessionStorage.setItem(STORE_KEY, info.type);
+          sessionStorage.setItem(REFRESH_KEY, '1');
+          sessionStorage.setItem(CHANGE_SCAN_KEY, info.type);
+        } catch (e) {}
         location.reload();
       }
 
@@ -218,9 +269,9 @@
         var alreadyRefreshed = false;
         try { alreadyRefreshed = sessionStorage.getItem(REFRESH_KEY) === '1'; } catch (e) {}
         if (opts.autoRefresh !== false && !alreadyRefreshed) {
-          timers.push(setTimeout(doRefreshOnce, 2600));
+          timers.push(setTimeout(doRefreshOnce, 2200));
         }
-      }, 2000));
+      }, 1800));
 
       if (typeof opts.onDetected === 'function') {
         timers.push(setTimeout(function() { opts.onDetected(info); }, 900));
@@ -247,13 +298,67 @@
   var currentInfo = null;
   var currentBanner = null;
   var resizeTimer = null;
+  var changeRescanDone = false;
+  var applyRoot = null;
+  var initOpts = null;
+
+  function accurateRescanOnce(fromType, toInfo) {
+    if (changeRescanDone) return;
+    changeRescanDone = true;
+    applyDeviceClass(applyRoot, toInfo.type);
+    currentInfo = toInfo;
+    try {
+      sessionStorage.setItem(STORE_KEY, toInfo.type);
+      sessionStorage.setItem(CHANGE_SCAN_KEY, fromType + '->' + toInfo.type);
+      sessionStorage.removeItem(REFRESH_KEY);
+    } catch (e) {}
+    if (initOpts && typeof initOpts.onDetected === 'function') {
+      try { initOpts.onDetected(toInfo); } catch (e2) {}
+    }
+    if (!initOpts || initOpts.silent) {
+      try {
+        sessionStorage.setItem(REFRESH_KEY, '1');
+      } catch (e3) {}
+      location.reload();
+      return;
+    }
+    if (currentBanner) hideBanner(currentBanner);
+    currentBanner = showBanner(initOpts || {}, toInfo);
+  }
+
+  function handlePossibleDeviceChange() {
+    var info = detectClientSide();
+    if (!currentInfo) {
+      currentInfo = info;
+      applyDeviceClass(applyRoot, info.type);
+      return;
+    }
+    if (info.type !== currentInfo.type) {
+      var prev = currentInfo.type;
+      if (initOpts && initOpts.apiKey) {
+        verifyWithServer(initOpts.apiKey, info, function(verified) {
+          if (verified.type !== prev) accurateRescanOnce(prev, verified);
+          else {
+            currentInfo = verified;
+            applyDeviceClass(applyRoot, verified.type);
+          }
+        });
+      } else {
+        accurateRescanOnce(prev, info);
+      }
+    } else {
+      currentInfo = info;
+      applyDeviceClass(applyRoot, info.type);
+    }
+  }
 
   var RebootDevice = {
     _base: 'https://rebootcord.world',
     init: function(opts) {
       opts = opts || {};
+      initOpts = opts;
+      changeRescanDone = false;
       var clientInfo = detectClientSide();
-      var applyRoot;
       try { applyRoot = opts.root ? document.querySelector(opts.root) : document.documentElement; } catch (e) { applyRoot = document.documentElement; }
 
       var finish = function(info) {
@@ -285,19 +390,33 @@
       if (opts.watchResize !== false) {
         window.addEventListener('resize', function() {
           if (resizeTimer) clearTimeout(resizeTimer);
-          resizeTimer = setTimeout(function() {
-            var info = detectClientSide();
-            if (!currentInfo || info.type !== currentInfo.type) {
-              currentInfo = info;
-              applyDeviceClass(applyRoot, info.type);
-              if (typeof opts.onDetected === 'function') opts.onDetected(info);
-            }
-          }, 250);
+          resizeTimer = setTimeout(handlePossibleDeviceChange, 180);
         }, { passive: true });
+        window.addEventListener('orientationchange', function() {
+          setTimeout(handlePossibleDeviceChange, 280);
+        }, { passive: true });
+        try {
+          if (window.matchMedia) {
+            var mqMobile = window.matchMedia('(max-width: 767px)');
+            var mqTablet = window.matchMedia('(min-width: 768px) and (max-width: 1024px)');
+            var onMq = function() { setTimeout(handlePossibleDeviceChange, 120); };
+            if (mqMobile.addEventListener) {
+              mqMobile.addEventListener('change', onMq);
+              mqTablet.addEventListener('change', onMq);
+            } else if (mqMobile.addListener) {
+              mqMobile.addListener(onMq);
+              mqTablet.addListener(onMq);
+            }
+          }
+        } catch (e) {}
       }
     },
     getDevice: function() { return currentInfo; },
     detect: detectClientSide,
+    rescan: function() {
+      changeRescanDone = false;
+      handlePossibleDeviceChange();
+    },
     hide: function() { hideBanner(currentBanner); currentBanner = null; }
   };
 

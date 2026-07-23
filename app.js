@@ -111,17 +111,54 @@ const state = {
 
 let ws;
 let searchTimeout = null;
+let wsReconnectDelay = 400;
+let wsHeartbeatTimer = null;
+let wsPingTimer = null;
+let actionLocks = {};
+
+function setProjectRunning(projectId, running) {
+  const id = String(projectId);
+  const p = state.projects.find(function(x){ return String(x.id) === id; });
+  if (p) p.running = !!running;
+  if (state.currentProject && String(state.currentProject.id) === id) state.currentProject.running = !!running;
+  const sp = state.sharedProjects.find(function(x){ return String(x.id) === id; });
+  if (sp) sp.running = !!running;
+}
+
+function clearWsTimers() {
+  if (wsHeartbeatTimer) { clearInterval(wsHeartbeatTimer); wsHeartbeatTimer = null; }
+  if (wsPingTimer) { clearTimeout(wsPingTimer); wsPingTimer = null; }
+}
 
 function connectWS() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  try { if (ws) { ws.onclose = null; ws.onerror = null; ws.onmessage = null; ws.close(); } } catch (e) {}
+  clearWsTimers();
   ws = new WebSocket(protocol + '//' + location.host);
+  ws.onopen = function() {
+    wsReconnectDelay = 400;
+    clearWsTimers();
+    wsHeartbeatTimer = setInterval(function() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ event: 'ping', t: Date.now() })); } catch (e) {}
+      }
+    }, 12000);
+  };
   ws.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
+      if (data.event === 'pong') return;
+      if (data.event === 'status') {
+        setProjectRunning(data.projectId, !!data.running);
+        if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) scheduleRender();
+        else if (state.page === 'projects') scheduleRender();
+        return;
+      }
       if (data.event === 'log') {
-        const p = state.projects.find(x => String(x.id) === String(data.projectId));
-        if (!p) return;
-        const tgt = p.type === 'minecraft' ? state.mcLogs : state.botLogs;
+        const p = state.projects.find(x => String(x.id) === String(data.projectId)) || state.sharedProjects.find(x => String(x.id) === String(data.projectId));
+        if (!p && !(state.currentProject && String(state.currentProject.id) === String(data.projectId))) return;
+        const projType = (p && p.type) || (state.currentProject && state.currentProject.type) || 'discord';
+        const tgt = projType === 'minecraft' ? state.mcLogs : state.botLogs;
         tgt.push({ t: getTime(), type: data.type, msg: data.msg });
         trimLogs(tgt);
 
@@ -135,13 +172,13 @@ function connectWS() {
           const pk = m2[1].trim();
           if (pk && state.missingPackages.indexOf(pk) === -1) state.missingPackages.push(pk);
         }
-        
+
+        if (data.msg && (data.msg.indexOf("Process exited") !== -1 || data.msg.indexOf("forcefully killed") !== -1 || data.msg.indexOf("Process stopped") !== -1 || data.msg.indexOf("stopped manually") !== -1)) {
+          setProjectRunning(data.projectId, false);
+        }
         if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
-          if (data.msg && (data.msg.indexOf("Process exited") !== -1 || data.msg.indexOf("forcefully killed") !== -1 || data.msg.indexOf("stopped manually") !== -1)) {
-            const pp = state.projects.find(function(x){ return String(x.id) === String(data.projectId); });
-            if (pp) pp.running = false;
-            if (state.currentProject) state.currentProject.running = false;
-          }
+          scheduleRender();
+        } else if (state.page === 'projects') {
           scheduleRender();
         }
       }
@@ -158,6 +195,7 @@ function connectWS() {
         if (state.currentProject && String(state.currentProject.id) === String(data.projectId)) {
           showKickedOverlay();
         }
+        fetchSharedProjects();
       }
       if (data.event === 'addedToProject') {
         fetchSharedProjects();
@@ -165,12 +203,29 @@ function connectWS() {
       }
     } catch(err) {}
   };
+  ws.onerror = function() {
+    try { if (ws) ws.close(); } catch (e) {}
+  };
   ws.onclose = () => {
-    setTimeout(connectWS, 2000);
+    clearWsTimers();
+    const delay = wsReconnectDelay;
+    wsReconnectDelay = Math.min(wsReconnectDelay * 1.6, 5000);
+    setTimeout(connectWS, delay);
   };
 }
 
 connectWS();
+
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'visible') {
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      wsReconnectDelay = 400;
+      connectWS();
+    } else if (ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify({ event: 'ping', t: Date.now() })); } catch (e) {}
+    }
+  }
+});
 
 let renderPending = false;
 
@@ -277,33 +332,58 @@ function detectDependencies(code, lang) {
   return Array.from(deps);
 }
 
+function withActionLock(id, fn) {
+  const key = String(id);
+  if (actionLocks[key]) return Promise.resolve({ success: false, busy: true });
+  actionLocks[key] = true;
+  return Promise.resolve().then(fn).finally(function() {
+    setTimeout(function() { delete actionLocks[key]; }, 250);
+  });
+}
+
 function killProject(p) {
-  if (!p) return;
-  p.running = false;
-  const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
-  if (proj) proj.running = false;
-  if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = false;
-  scheduleRender();
-  fetch("/api/projects/" + p.id + "/kill", { method: "POST" });
+  if (!p) return Promise.resolve();
+  return withActionLock(p.id, function() {
+    setProjectRunning(p.id, false);
+    scheduleRender();
+    return fetch("/api/projects/" + p.id + "/kill", { method: "POST" })
+      .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
+      .then(function(data){
+        setProjectRunning(p.id, false);
+        scheduleRender();
+        return data;
+      })
+      .catch(function(){
+        setProjectRunning(p.id, false);
+        scheduleRender();
+        return { success: false };
+      });
+  });
 }
 
 function restartProject(p) {
-  if (!p) return;
-  p.running = false;
-  const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
-  if (proj) proj.running = false;
-  if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = false;
-  scheduleRender();
-  fetch("/api/projects/" + p.id + "/stop", { method: "POST" }).then(function() {
-    setTimeout(function() {
-      fetch("/api/projects/" + p.id + "/start", { method: "POST" }).then(function() {
-        p.running = true;
-        const proj2 = state.projects.find(function(x){ return String(x.id) === String(p.id); });
-        if (proj2) proj2.running = true;
-        if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = true;
+  if (!p) return Promise.resolve();
+  return withActionLock(p.id, function() {
+    setProjectRunning(p.id, false);
+    scheduleRender();
+    return fetch("/api/projects/" + p.id + "/kill", { method: "POST" })
+      .then(function(r){ return r.json().catch(function(){ return { success: true }; }); })
+      .then(function(){
+        return new Promise(function(resolve){ setTimeout(resolve, 450); });
+      })
+      .then(function(){
+        return fetch("/api/projects/" + p.id + "/start", { method: "POST" }).then(function(r){ return r.json().catch(function(){ return { success: false }; }); });
+      })
+      .then(function(data){
+        setProjectRunning(p.id, !!(data && data.success));
         scheduleRender();
+        return data;
+      })
+      .catch(function(){
+        setProjectRunning(p.id, false);
+        scheduleRender();
+        return { success: false };
       });
-    }, 600);
   });
 }
 
@@ -832,6 +912,7 @@ function fetchProjectAccess(id) {
       state.projectAccess = d;
       state.settingsName = d.name || "";
       state.settingsPrivate = !!d.private;
+      state.settingsPassword = d.isOwner ? (d.password || "") : "";
       state.needsProjectPassword = !!d.locked;
       scheduleRender();
     } else if (d.removed && state.currentProject && String(state.currentProject.id) === String(id)) {
@@ -1036,7 +1117,7 @@ function renderSettingsModal() {
   }));
   if (isOwner) {
     modal.appendChild(el("label", { className: "modal-label" }, "Current project password"));
-    modal.appendChild(el("input", { className: "modal-input", type: "text", placeholder: access.hasPassword ? "••••••••" : "No password set", value: state.settingsPassword, oninput: (e) => { state.settingsPassword = e.target.value; } }));
+    modal.appendChild(el("input", { className: "modal-input", type: "text", placeholder: access.hasPassword || state.settingsPassword ? "" : "No password set", value: state.settingsPassword || "", oninput: (e) => { state.settingsPassword = e.target.value; } }));
     modal.appendChild(el("label", { className: "share-checkbox", style: { marginTop: "10px" } },
       el("input", { type: "checkbox", checked: state.settingsPrivate, onChange: (e) => { state.settingsPrivate = e.target.checked; scheduleRender(); } }),
       " Make project private"
@@ -1579,44 +1660,78 @@ function openProject(id) {
 
 function deleteProject(id) {
   if (!confirm("Delete this project?")) return;
-  const p = state.projects.find(x => x.id === id);
-  if (p && p.running) { fetch("/api/projects/" + id + "/kill", { method: "POST" }); }
-  state.projects = state.projects.filter(function(x){ return x.id !== id; });
-  if (state.currentProject && state.currentProject.id === id) { state.currentProject = null; state.page = "projects"; }
-  saveProjects();
-  scheduleRender();
+  const p = state.projects.find(x => String(x.id) === String(id));
+  withActionLock(id, function() {
+    setProjectRunning(id, false);
+    if (state.currentProject && String(state.currentProject.id) === String(id)) {
+      state.currentProject = null;
+      state.page = "projects";
+    }
+    scheduleRender();
+    return fetch("/api/projects/" + id + "/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    }).then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
+      .then(function(data){
+        if (data && data.success) {
+          state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
+          scheduleRender();
+          return data;
+        }
+        return fetch("/api/projects/" + id + "/kill", { method: "POST" })
+          .then(function(){
+            state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
+            saveProjects();
+            scheduleRender();
+            return { success: true };
+          });
+      })
+      .catch(function(){
+        state.projects = state.projects.filter(function(x){ return String(x.id) !== String(id); });
+        saveProjects();
+        scheduleRender();
+        return { success: false };
+      });
+  });
 }
 
 function toggleRunning(p) {
   if (!p) return;
-  const wasRunning = p.running;
-  const nextRunning = !wasRunning;
+  withActionLock(p.id, function() {
+    const wasRunning = !!p.running;
+    const nextRunning = !wasRunning;
+    setProjectRunning(p.id, nextRunning);
+    scheduleRender();
 
-  p.running = nextRunning;
-  const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
-  if (proj) proj.running = nextRunning;
-  if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = nextRunning;
-  scheduleRender();
+    if (nextRunning) {
+      return fetch("/api/projects/" + p.id + "/start", { method: "POST" })
+        .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
+        .then(function(data){
+          setProjectRunning(p.id, !!(data && data.success));
+          scheduleRender();
+          return data;
+        })
+        .catch(function(){
+          setProjectRunning(p.id, false);
+          scheduleRender();
+          return { success: false };
+        });
+    }
 
-  if (nextRunning) {
-    fetch("/api/projects/" + p.id + "/start", { method: "POST" }).then(function(r){ return r.json(); }).then(function(data){
-      if (!data.success) {
-        p.running = false;
-        if (proj) proj.running = false;
-        if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = false;
+    return fetch("/api/projects/" + p.id + "/stop", { method: "POST" })
+      .then(function(r){ return r.json().catch(function(){ return { success: false }; }); })
+      .then(function(data){
+        if (data && data.success) setProjectRunning(p.id, false);
+        else setProjectRunning(p.id, true);
         scheduleRender();
-      }
-    });
-  } else {
-    fetch("/api/projects/" + p.id + "/stop", { method: "POST" }).then(function(r){ return r.json(); }).then(function(data){
-      if (!data.success) {
-        p.running = true;
-        if (proj) proj.running = true;
-        if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = true;
+        return data;
+      })
+      .catch(function(){
+        setProjectRunning(p.id, true);
         scheduleRender();
-      }
-    });
-  }
+        return { success: false };
+      });
+  });
 }
 
 function flashSaveBtn(btn) {

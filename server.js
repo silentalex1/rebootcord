@@ -387,22 +387,64 @@ function canEditFiles(access) {
   return access.isOwner || (access.hasAccess && (access.perms.editFiles || access.perms.fullAccess));
 }
 
+function findProjectOwner(projectId) {
+  for (const owner of db.users || []) {
+    const p = (owner.projects || []).find(x => String(x.id) === String(projectId));
+    if (p) return { owner, p };
+  }
+  return null;
+}
+
+function projectAudience(projectId) {
+  const found = findProjectOwner(projectId);
+  if (!found) return [];
+  const names = new Set([found.owner.username]);
+  (found.p.shared || []).forEach(s => { if (s && s.username) names.add(s.username); });
+  return Array.from(names);
+}
+
 function broadcastLog(username, projectId, msg, type) {
-  const payload = JSON.stringify({ event: 'log', projectId, msg, type: type || 'info' });
+  const payload = JSON.stringify({ event: 'log', projectId, msg, type: type || 'info', ts: Date.now() });
+  const audience = new Set([username].concat(projectAudience(projectId)));
   for (const client of wsClients) {
-    if (client.username === username && client.readyState === WebSocket.OPEN) {
-      client.send(payload);
+    if (audience.has(client.username) && client.readyState === WebSocket.OPEN) {
+      try { client.send(payload); } catch (e) {}
     }
   }
 }
 
 function broadcastEvent(username, payload) {
-  const data = JSON.stringify(payload);
+  const data = JSON.stringify(Object.assign({ ts: Date.now() }, payload));
   for (const client of wsClients) {
     if (client.username === username && client.readyState === WebSocket.OPEN) {
-      client.send(data);
+      try { client.send(data); } catch (e) {}
     }
   }
+}
+
+function broadcastProjectStatus(projectId, running) {
+  const payload = JSON.stringify({ event: 'status', projectId, running: !!running, ts: Date.now() });
+  const audience = projectAudience(projectId);
+  for (const client of wsClients) {
+    if (audience.includes(client.username) && client.readyState === WebSocket.OPEN) {
+      try { client.send(payload); } catch (e) {}
+    }
+  }
+}
+
+function forceKillProjectProcess(projectId) {
+  const proc = procs[projectId];
+  if (!proc) return false;
+  try { killProcessTree(proc, 'SIGKILL'); } catch (e) {}
+  try {
+    if (proc.pid) {
+      try { process.kill(proc.pid, 'SIGKILL'); } catch (e2) {}
+      try { process.kill(-proc.pid, 'SIGKILL'); } catch (e3) {}
+    }
+  } catch (e) {}
+  try { if (typeof proc.kill === 'function') proc.kill('SIGKILL'); } catch (e4) {}
+  delete procs[projectId];
+  return true;
 }
 
 wss.on('connection', (ws, req) => {
@@ -410,10 +452,18 @@ wss.on('connection', (ws, req) => {
   const user = verifyToken(token);
   if (!user) return ws.close();
   ws.username = user;
+  ws.isAlive = true;
   wsClients.add(ws);
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (msg) => {
     try {
       const data = JSON.parse(msg);
+      if (data.event === 'ping') {
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ event: 'pong', t: data.t || Date.now() })); } catch (e) {}
+        }
+        return;
+      }
       if (data.event === 'cmd' && data.projectId && procs[data.projectId]) {
         procs[data.projectId].stdin.write(data.cmd + '\n');
       }
@@ -509,7 +559,23 @@ wss.on('connection', (ws, req) => {
     } catch (e) {}
   });
   ws.on('close', () => wsClients.delete(ws));
+  ws.on('error', () => { try { wsClients.delete(ws); } catch (e) {} });
 });
+
+const wsHeartbeatInterval = setInterval(() => {
+  for (const client of wsClients) {
+    if (client.isAlive === false) {
+      try { client.terminate(); } catch (e) {}
+      wsClients.delete(client);
+      continue;
+    }
+    client.isAlive = false;
+    try { client.ping(); } catch (e) {
+      try { client.terminate(); } catch (e2) {}
+      wsClients.delete(client);
+    }
+  }
+}, 20000);
 
 app.use(express.static(__dirname, { index: false }));
 
@@ -619,7 +685,20 @@ app.post('/api/projects', (req, res) => {
   if (!u) return res.json({ success: false });
   const user = db.users.find(x => x.username === u);
   if (!user) return res.json({ success: false });
-  user.projects = req.body.projects || [];
+  const incoming = Array.isArray(req.body.projects) ? req.body.projects : [];
+  const keepIds = new Set(incoming.map(p => String(p.id)));
+  const previous = user.projects || [];
+  previous.forEach(oldP => {
+    if (!keepIds.has(String(oldP.id))) {
+      forceKillProjectProcess(oldP.id);
+      broadcastProjectStatus(oldP.id, false);
+      try {
+        const pDir = path.join(PROJECTS_DIR, String(oldP.id));
+        if (fs.existsSync(pDir)) fs.rmSync(pDir, { recursive: true, force: true });
+      } catch (e) {}
+    }
+  });
+  user.projects = incoming;
   db.mcPorts = db.mcPorts || 25565;
   user.projects.forEach(p => {
     if (p.type === 'minecraft' && !p.port) {
@@ -641,6 +720,33 @@ app.post('/api/projects', (req, res) => {
   res.json({ success: true });
 });
 
+app.post('/api/projects/:id/delete', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  if (!user) return res.json({ success: false });
+  const id = req.params.id;
+  const p = (user.projects || []).find(x => String(x.id) === String(id));
+  if (!p) return res.json({ success: false, message: 'Project not found.' });
+  forceKillProjectProcess(id);
+  p.running = false;
+  broadcastProjectStatus(id, false);
+  broadcastLog(u, id, '[System] Project deleted — process force killed and shut down.', 'warn');
+  (p.shared || []).forEach(s => {
+    if (s && s.username) {
+      broadcastEvent(s.username, { event: 'removedFromProject', projectId: id, projectName: p.name });
+      delete unlockedAccess[s.username + '::' + id];
+    }
+  });
+  user.projects = (user.projects || []).filter(x => String(x.id) !== String(id));
+  try {
+    const pDir = path.join(PROJECTS_DIR, String(id));
+    if (fs.existsSync(pDir)) fs.rmSync(pDir, { recursive: true, force: true });
+  } catch (e) {}
+  saveDB();
+  res.json({ success: true });
+});
+
 app.get('/api/projects/:id/access', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
@@ -654,6 +760,7 @@ app.get('/api/projects/:id/access', (req, res) => {
     perms: access.perms,
     locked: access.locked,
     hasPassword: !!access.p.password,
+    password: access.isOwner ? (access.p.password || '') : '',
     private: !!access.p.private,
     name: access.p.name,
     shared: access.isOwner ? (access.p.shared || []).map(s => ({ username: s.username, perms: s.perms })) : []
@@ -749,7 +856,7 @@ app.post('/api/projects/:id/unshare', (req, res) => {
       ts: Date.now(),
       readBy: [],
       sender: user.username,
-      rank: 'notice',
+      rank: 'removed',
       recipient: removedUser
     });
   }
@@ -1157,12 +1264,12 @@ app.post('/api/projects/:id/start', async (req, res) => {
   if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
 
   if (procs[p.id]) {
-    killProcessTree(procs[p.id], 'SIGKILL');
-    delete procs[p.id];
+    forceKillProjectProcess(p.id);
   }
 
   p.running = true;
   saveDB();
+  broadcastProjectStatus(p.id, true);
 
   if (p.type === 'minecraft') {
     let javaCmd = 'java';
@@ -1245,7 +1352,13 @@ app.post('/api/projects/:id/start', async (req, res) => {
       });
     });
     
-    proc.on('close', () => { p.running = false; saveDB(); broadcastLog(u, p.id, '[System] Process exited.', 'sys'); });
+    proc.on('close', () => {
+      if (procs[p.id] === proc) delete procs[p.id];
+      p.running = false;
+      saveDB();
+      broadcastProjectStatus(p.id, false);
+      broadcastLog(u, p.id, '[System] Process exited.', 'sys');
+    });
 
   } else {
     if (p.files) {
@@ -1288,8 +1401,19 @@ app.post('/api/projects/:id/start', async (req, res) => {
     const proc = cp.spawn(cmd, args, { cwd: pDir, env: envVars, shell: p.lang === 'Python' ? false : true, detached: true });
     procs[p.id] = proc;
     let missingPkgs = new Set();
-    proc.on('error', (err) => { broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err'); p.running=false; saveDB(); });
-    proc.on('close', (code) => { if (procs[p.id]) delete procs[p.id]; p.running = false; saveDB(); broadcastLog(u, p.id, '[System] Process exited ('+code+').', 'sys'); });
+    proc.on('error', (err) => {
+      broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err');
+      p.running = false;
+      saveDB();
+      broadcastProjectStatus(p.id, false);
+    });
+    proc.on('close', (code) => {
+      if (procs[p.id] === proc) delete procs[p.id];
+      p.running = false;
+      saveDB();
+      broadcastProjectStatus(p.id, false);
+      broadcastLog(u, p.id, '[System] Process exited ('+code+').', 'sys');
+    });
 
     proc.stdout.on('data', d => {
       d.toString().split('\n').forEach(line => {
@@ -1318,10 +1442,12 @@ app.post('/api/projects/:id/start', async (req, res) => {
 });
 
 function killProcessTree(proc, signal) {
+  if (!proc) return;
   try {
-    process.kill(-proc.pid, signal);
+    if (proc.pid) process.kill(-proc.pid, signal);
   } catch(e) {
-    try { proc.kill(signal); } catch(e2) {}
+    try { if (proc.pid) process.kill(proc.pid, signal); } catch(e2) {}
+    try { proc.kill(signal); } catch(e3) {}
   }
 }
 
@@ -1332,18 +1458,18 @@ app.post('/api/projects/:id/stop', (req, res) => {
   const p = access.p;
   if (!p || !canControl(access)) return res.json({ success: false });
 
-  if (procs[p.id]) {
-    const proc = procs[p.id];
+  const proc = procs[p.id];
+  if (proc) {
     killProcessTree(proc, 'SIGTERM');
     setTimeout(() => {
       if (procs[p.id] === proc) {
-        killProcessTree(proc, 'SIGKILL');
-        delete procs[p.id];
+        forceKillProjectProcess(p.id);
       }
-    }, 2000);
+    }, 1200);
   }
   p.running = false;
   saveDB();
+  broadcastProjectStatus(p.id, false);
   broadcastLog(u, p.id, '[System] Process stopped.', 'warn');
   res.json({ success: true });
 });
@@ -1355,14 +1481,10 @@ app.post('/api/projects/:id/kill', (req, res) => {
   const p = access.p;
   if (!p || !canControl(access)) return res.json({ success: false });
 
-  if (procs[p.id]) {
-    const proc = procs[p.id];
-    killProcessTree(proc, 'SIGKILL');
-    delete procs[p.id];
-  }
-
+  forceKillProjectProcess(p.id);
   p.running = false;
   saveDB();
+  broadcastProjectStatus(p.id, false);
   broadcastLog(u, p.id, '[System] Process forcefully killed.', 'warn');
   res.json({ success: true });
 });
@@ -1516,18 +1638,27 @@ function detectDeviceFromUA(uaRaw, hints) {
   let type = 'desktop';
   let os = 'unknown';
   let browser = 'unknown';
+  const touch = !!(hints.touch || (typeof hints.maxTouchPoints === 'number' && hints.maxTouchPoints > 0));
+  const w = typeof hints.screenWidth === 'number' ? hints.screenWidth : 0;
+  const h = typeof hints.screenHeight === 'number' ? hints.screenHeight : 0;
+  const minSide = w && h ? Math.min(w, h) : (w || h || 0);
+  const maxSide = w && h ? Math.max(w, h) : (w || h || 0);
 
-  if (/ipad/.test(ua) || (/macintosh/.test(ua) && hints.touch)) type = 'tablet';
-  else if (/tablet|kindle|silk|playbook/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) type = 'tablet';
-  else if (/mobi|iphone|ipod|android.*mobile|windows phone|blackberry|opera mini|iemobile/.test(ua)) type = 'mobile';
-  else if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s/.test(ua)) type = 'tv';
+  if (/ipad/.test(ua) || (/macintosh/.test(ua) && touch)) type = 'tablet';
+  else if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) type = 'tablet';
+  else if (/android/.test(ua) && /mobile/.test(ua)) type = (minSide && minSide >= 600) ? 'tablet' : 'mobile';
+  else if (/mobi|iphone|ipod|windows phone|blackberry|opera mini|iemobile|fennec/.test(ua)) type = 'mobile';
+  else if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s|crkey|roku/.test(ua)) type = 'tv';
   else if (/xbox|playstation|nintendo/.test(ua)) type = 'console';
-  else if (/bot|crawl|spider|slurp|bingpreview/.test(ua)) type = 'bot';
+  else if (/bot|crawl|spider|slurp|bingpreview|headless|googlebot|bingbot|duckduckbot|baiduspider|yandexbot|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot/.test(ua)) type = 'bot';
   else type = 'desktop';
 
-  if (typeof hints.maxTouchPoints === 'number' && hints.maxTouchPoints > 0 && typeof hints.screenWidth === 'number') {
-    if (hints.screenWidth < 640 && type === 'desktop') type = 'mobile';
-    else if (hints.screenWidth < 1100 && type === 'desktop') type = 'tablet';
+  if (type === 'desktop' && touch) {
+    if (minSide && minSide < 640) type = 'mobile';
+    else if (minSide && minSide < 1180) type = 'tablet';
+  } else if (type === 'desktop' && minSide) {
+    if (minSide < 640) type = 'mobile';
+    else if (minSide < 900 && maxSide < 1280) type = 'tablet';
   }
 
   if (/windows nt/.test(ua)) os = 'windows';
@@ -1536,11 +1667,12 @@ function detectDeviceFromUA(uaRaw, hints) {
   else if (/iphone|ipad|ipod/.test(ua)) os = 'ios';
   else if (/cros/.test(ua)) os = 'chromeos';
   else if (/linux/.test(ua)) os = 'linux';
+  if (os === 'macos' && touch && type !== 'desktop') os = 'ios';
 
   if (/edg\//.test(ua)) browser = 'edge';
+  else if (/samsungbrowser/.test(ua)) browser = 'samsung';
   else if (/opr\/|opera/.test(ua)) browser = 'opera';
-  else if (/chrome\//.test(ua)) browser = 'chrome';
-  else if (/crios/.test(ua)) browser = 'chrome';
+  else if (/chrome\//.test(ua) || /crios/.test(ua)) browser = 'chrome';
   else if (/fxios|firefox/.test(ua)) browser = 'firefox';
   else if (/safari/.test(ua)) browser = 'safari';
 
@@ -1553,7 +1685,8 @@ app.get('/api/v1/device', (req, res) => {
   const hints = {
     touch: req.query.touch === '1',
     maxTouchPoints: req.query.mtp ? parseInt(req.query.mtp, 10) : 0,
-    screenWidth: req.query.w ? parseInt(req.query.w, 10) : 0
+    screenWidth: req.query.w ? parseInt(req.query.w, 10) : 0,
+    screenHeight: req.query.h ? parseInt(req.query.h, 10) : 0
   };
   const info = detectDeviceFromUA(req.headers['user-agent'] || '', hints);
   res.json({ success: true, type: info.type, os: info.os, browser: info.browser });

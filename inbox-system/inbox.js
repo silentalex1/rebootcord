@@ -27,13 +27,15 @@ function loadInbox() {
       return;
     }
     data.messages.forEach(m => {
-      const isNotice = m.rank === 'notice';
+      const titleText = String(m.title || '');
+      const isRemoved = m.rank === 'removed' || /^Removed from\b/i.test(titleText) || /has removed you from their project/i.test(String(m.body || ''));
+      const isNotice = !isRemoved && m.rank === 'notice';
       const item = document.createElement('div');
-      item.className = 'inbox-item' + (m.read ? '' : ' unread') + (isNotice ? ' notice' : '');
+      item.className = 'inbox-item' + (m.read ? '' : ' unread') + (isRemoved ? ' removed' : (isNotice ? ' notice' : ''));
 
       const avatar = document.createElement('div');
-      avatar.className = 'inbox-item-avatar' + (isNotice ? ' notice' : '');
-      avatar.textContent = isNotice ? '!' : initials(m.sender);
+      avatar.className = 'inbox-item-avatar' + (isRemoved ? ' removed' : (isNotice ? ' notice' : ''));
+      avatar.textContent = isRemoved ? '×' : (isNotice ? '!' : initials(m.sender));
 
       const main = document.createElement('div');
       main.className = 'inbox-item-main';
@@ -48,15 +50,18 @@ function loadInbox() {
       titleWrap.appendChild(title);
       if (!m.read) {
         const badge = document.createElement('span');
-        badge.className = 'inbox-unread-badge' + (isNotice ? ' notice' : '');
+        badge.className = 'inbox-unread-badge' + (isRemoved ? ' removed' : (isNotice ? ' notice' : ''));
         badge.textContent = 'unread';
         titleWrap.appendChild(badge);
       }
+      const meta = document.createElement('div');
+      meta.className = 'inbox-item-meta';
       const date = document.createElement('span');
       date.className = 'inbox-item-date';
       date.textContent = formatDate(m.ts);
+      meta.appendChild(date);
       top.appendChild(titleWrap);
-      top.appendChild(date);
+      top.appendChild(meta);
 
       const body = document.createElement('div');
       body.className = 'inbox-item-body';
@@ -79,7 +84,7 @@ function loadInbox() {
       }
 
       main.appendChild(top);
-      if (m.rank && !isNotice) {
+      if (m.rank && !isNotice && !isRemoved) {
         const rank = document.createElement('div');
         rank.className = 'inbox-item-rank';
         rank.textContent = m.rank;
@@ -113,7 +118,7 @@ function loadInbox() {
             }
           });
         };
-        item.appendChild(delBtn);
+        meta.appendChild(delBtn);
       }
 
       item.onclick = () => {
