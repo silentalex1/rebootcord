@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: prysmisai
+    name: rebootcord-web
     env: node
     region: oregon
     plan: starter
@@ -17,8 +17,19 @@ services:
         value: prysmis-ai
       - key: AI_PROVIDER
         value: auto
-    
     disk:
       name: rebootcord-data
       mountPath: /opt/render/project/src/data
       sizeGB: 1
+  - type: worker
+    name: rebootcord-bot
+    env: python
+    region: oregon
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: SITE_URL
+        value: https://rebootcord.world
