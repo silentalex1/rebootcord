@@ -321,11 +321,17 @@ function sanitizeInput(input) {
 
 function verifyToken(token) {
   if (!token) return null;
-  const parts = token.split('.');
-  if (parts.length !== 2) return null;
-  const expected = crypto.createHmac('sha256', SECRET).update(parts[0]).digest('base64');
-  if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(parts[1]))) return null;
-  try { return JSON.parse(Buffer.from(parts[0], 'base64').toString()).u; } catch(e) { return null; }
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const expectedBuf = Buffer.from(crypto.createHmac('sha256', SECRET).update(parts[0]).digest('base64'));
+    const givenBuf = Buffer.from(parts[1]);
+    if (expectedBuf.length !== givenBuf.length) return null;
+    if (!crypto.timingSafeEqual(expectedBuf, givenBuf)) return null;
+    return JSON.parse(Buffer.from(parts[0], 'base64').toString()).u;
+  } catch (e) {
+    return null;
+  }
 }
 
 function parseCookies(req) {
@@ -625,7 +631,8 @@ app.get('/api/projects/:id/access', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
   const access = getAccess(u, req.params.id);
-  if (!access.p) return res.json({ success: false });
+  if (!access.p) return res.json({ success: false, notFound: true });
+  if (!access.hasAccess) return res.json({ success: false, removed: true });
   res.json({
     success: true,
     isOwner: access.isOwner,
@@ -677,7 +684,19 @@ app.post('/api/projects/:id/share', (req, res) => {
     ts: Date.now(),
     seen: false
   });
+  db.inboxMessages = db.inboxMessages || [];
+  db.inboxMessages.unshift({
+    id: Date.now(),
+    title: `Added to "${p.name}"`,
+    body: `${u} has added you to their ${p.name} project.`,
+    ts: Date.now(),
+    readBy: [],
+    sender: u,
+    rank: 'notice',
+    recipient: targetUser.username
+  });
   saveDB();
+  broadcastEvent(targetUser.username, { event: 'addedToProject', projectId: p.id, projectName: p.name });
   res.json({ success: true, shared: p.shared });
 });
 
@@ -712,7 +731,7 @@ app.post('/api/projects/:id/unshare', (req, res) => {
     db.inboxMessages.unshift({
       id: Date.now(),
       title: `Removed from "${p.name}"`,
-      body: `${user.username} removed you from the project "${p.name}". You no longer have access to its files or console.`,
+      body: `${user.username} has removed you from their project.`,
       ts: Date.now(),
       readBy: [],
       sender: user.username,
@@ -721,6 +740,7 @@ app.post('/api/projects/:id/unshare', (req, res) => {
     });
   }
   saveDB();
+  if (wasShared) broadcastEvent(removedUser, { event: 'removedFromProject', projectId: p.id, projectName: p.name });
   res.json({ success: true, shared: p.shared });
 });
 
@@ -1344,7 +1364,7 @@ function requireAdmin(req, res) {
 app.get('/api/admin/data', (req, res) => {
   if (!requireAdmin(req, res)) return res.json({ users: [], inviteCodes: {}, adminApiKeys: [] });
   const users = db.users.map(u => ({ username: u.username, admin: !!u.admin, premium: !!u.premium }));
-  res.json({ users, inviteCodes: db.inviteCodes, adminApiKeys: db.adminApiKeys || [] });
+  res.json({ users, inviteCodes: db.inviteCodes || {}, adminApiKeys: db.adminApiKeys || [] });
 });
 
 app.post('/api/admin/revoke', (req, res) => {
@@ -1961,7 +1981,16 @@ app.post('/api/v1/feedback-reply', (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  res.status(500).json({ success: false, message: 'Internal server error' });
+  res.status(500).json({
+    success: false,
+    message: 'Internal server error',
+    users: [],
+    inviteCodes: {},
+    adminApiKeys: [],
+    messages: [],
+    projects: [],
+    shared: []
+  });
 });
 
 app.use((req, res) => {
