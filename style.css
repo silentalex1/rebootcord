@@ -18,9 +18,9 @@
   --blue-dark:#4752c4;
   --blue-glow:#5865f222;
   --blue-bright:#7289da;
-  --text:#f4f4f4;
-  --text-dim:#8a8a8a;
-  --text-muted:#4a4a4a;
+  --text:#e8e8ec;
+  --text-dim:#9a9aa2;
+  --text-muted:#57575f;
   --border:#1f1f1f;
   --border-bright:#2d2d2d;
   --mc:#4c8c2a;
@@ -31,7 +31,7 @@
 }
 
 html{scroll-behavior:smooth}
-body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
 ::selection{background:var(--red-glow);color:var(--text)}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -83,6 +83,8 @@ input,textarea,select{font-family:var(--font)}
 .tag.running{background:var(--green-glow);color:var(--green)}
 .tag.stopped{background:#e6394618;color:var(--red)}
 .discord-tag{background:var(--blue-glow);color:var(--blue-bright)}
+.shared-tag{background:var(--blue-glow);color:var(--blue-bright)}
+.shared-section-title{font-size:15px;font-weight:800;color:var(--text);margin:28px 0 14px;letter-spacing:-.01em}
 .card-actions{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
 .btn-manage{background:var(--surface3);color:var(--text);padding:5px 10px;border-radius:6px;font-size:11px;font-weight:600;transition:.2s}
 .btn-manage:hover{background:var(--surface4)}
