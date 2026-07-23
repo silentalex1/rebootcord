@@ -52,6 +52,8 @@
     var touch = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0 || (navigator.msMaxTouchPoints || 0) > 0;
     var coarsePointer = false;
     try { coarsePointer = window.matchMedia && window.matchMedia('(pointer:coarse)').matches; } catch (e) {}
+    var noHover = false;
+    try { noHover = window.matchMedia && window.matchMedia('(hover:none)').matches; } catch (e) {}
     var w = window.screen && window.screen.width ? window.screen.width : window.innerWidth;
     var h = window.screen && window.screen.height ? window.screen.height : window.innerHeight;
     var minSide = Math.min(w || 0, h || 0);
@@ -64,7 +66,9 @@
       type = 'tablet';
     } else if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10/.test(ua) || (/android/.test(ua) && !/mobile/.test(ua))) {
       type = 'tablet';
-    } else if (/mobi|iphone|ipod|windows phone|blackberry|iemobile|opera mini|fennec/.test(ua) || (/android/.test(ua) && /mobile/.test(ua))) {
+    } else if (/android/.test(ua) && /mobile/.test(ua)) {
+      type = (minSide && minSide >= 600) ? 'tablet' : 'mobile';
+    } else if (/mobi|iphone|ipod|windows phone|blackberry|iemobile|opera mini|fennec/.test(ua)) {
       type = 'mobile';
     } else if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s|crkey|roku/.test(ua)) {
       type = 'tv';
@@ -76,7 +80,7 @@
       type = 'desktop';
     }
 
-    if (type === 'desktop' && (touch || coarsePointer)) {
+    if (type === 'desktop' && (touch || coarsePointer || noHover)) {
       if (minSide && minSide < 640) type = 'mobile';
       else if (minSide && minSide < 1180) type = 'tablet';
     }
