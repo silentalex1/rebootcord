@@ -591,6 +591,169 @@ wss.on('connection', (ws, req) => {
           });
         }
       }
+      if (data.event === 'terminalCommand' && data.projectId) {
+        const uObj = db.users.find(u => u.username === user);
+        if (!uObj) return;
+        const p = uObj.projects.find(x => String(x.id) === String(data.projectId));
+        if (p) {
+          const pDir = path.join(PROJECTS_DIR, String(p.id));
+          if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+          const cmd = String(data.command || '').trim();
+          if (!cmd) return;
+          
+          const broadcastTerminal = (msg, type = 'info') => {
+            broadcastEvent(user, { event: 'terminalOutput', projectId: p.id, msg, type });
+          };
+          
+          const parts = cmd.split(/\s+/).filter(s => s);
+          const command = parts[0].toLowerCase();
+          const args = parts.slice(1);
+          
+          if (command === 'help') {
+            broadcastTerminal('Available commands:', 'info');
+            broadcastTerminal('  help - Show this help message', 'info');
+            broadcastTerminal('  delete <folder> - Delete a folder in the project', 'info');
+            broadcastTerminal('  mkdir <folder> - Create a new folder', 'info');
+            broadcastTerminal('  ls - List files and folders', 'info');
+            broadcastTerminal('  pip install <package> - Install Python package', 'info');
+            broadcastTerminal('  pip install -r requirements.txt - Install from requirements.txt', 'info');
+            broadcastTerminal('  npm install <package> - Install Node.js package', 'info');
+            broadcastTerminal('  npm install - Install all dependencies from package.json', 'info');
+            broadcastTerminal('  python <file> - Run a Python file', 'info');
+            broadcastTerminal('  node <file> - Run a Node.js file', 'info');
+            broadcastTerminal('  clear - Clear terminal output', 'info');
+          } else if (command === 'clear') {
+            broadcastTerminal('Terminal cleared', 'info');
+          } else if (command === 'ls') {
+            try {
+              const items = fs.readdirSync(pDir, { withFileTypes: true });
+              const output = items.map(item => {
+                const suffix = item.isDirectory() ? '/' : '';
+                return item.name + suffix;
+              }).join('  ');
+              broadcastTerminal(output || 'Empty directory', 'info');
+            } catch (e) {
+              broadcastTerminal('Error listing directory: ' + e.message, 'err');
+            }
+          } else if (command === 'mkdir' && args.length > 0) {
+            const folderName = args[0];
+            try {
+              const target = safeJoin(pDir, folderName);
+              if (target) {
+                fs.mkdirSync(target, { recursive: true });
+                broadcastTerminal('Created folder: ' + folderName, 'ok');
+              } else {
+                broadcastTerminal('Invalid folder name', 'err');
+              }
+            } catch (e) {
+              broadcastTerminal('Error creating folder: ' + e.message, 'err');
+            }
+          } else if (command === 'delete' && args.length > 0) {
+            const targetName = args[0];
+            try {
+              const target = safeJoin(pDir, targetName);
+              if (target && fs.existsSync(target)) {
+                fs.rmSync(target, { recursive: true, force: true });
+                broadcastTerminal('Deleted: ' + targetName, 'ok');
+                
+                if (p.files) {
+                  const deletedKeys = Object.keys(p.files).filter(k => k.startsWith(targetName));
+                  deletedKeys.forEach(k => delete p.files[k]);
+                  if (deletedKeys.length > 0) saveDB();
+                }
+              } else {
+                broadcastTerminal('Path not found: ' + targetName, 'err');
+              }
+            } catch (e) {
+              broadcastTerminal('Error deleting: ' + e.message, 'err');
+            }
+          } else if (command === 'pip' && args.length > 0) {
+            if (p.lang !== 'Python') {
+              broadcastTerminal('pip commands are only available for Python projects', 'err');
+              return;
+            }
+            const modulesDir = path.join(pDir, 'modules');
+            if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
+            
+            let pipCmd = 'pip ' + args.join(' ');
+            if (pipCmd.includes('install') && !pipCmd.includes('--target')) {
+              pipCmd += ' --target ./modules --no-cache-dir';
+            }
+            
+            broadcastTerminal('Running: ' + pipCmd, 'info');
+            cp.exec(pipCmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+              if (stdout) broadcastTerminal(stdout, 'info');
+              if (stderr) broadcastTerminal(stderr, 'warn');
+              if (err) {
+                broadcastTerminal('Command failed: ' + err.message, 'err');
+              } else {
+                broadcastTerminal('Command completed successfully', 'ok');
+              }
+            });
+          } else if (command === 'npm' && args.length > 0) {
+            if (p.lang === 'Python') {
+              broadcastTerminal('npm commands are only available for Node.js projects', 'err');
+              return;
+            }
+            
+            let npmCmd = 'npm ' + args.join(' ');
+            broadcastTerminal('Running: ' + npmCmd, 'info');
+            cp.exec(npmCmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+              if (stdout) broadcastTerminal(stdout, 'info');
+              if (stderr) broadcastTerminal(stderr, 'warn');
+              if (err) {
+                broadcastTerminal('Command failed: ' + err.message, 'err');
+              } else {
+                broadcastTerminal('Command completed successfully', 'ok');
+              }
+            });
+          } else if (command === 'python' || command === 'python3') {
+            if (p.lang !== 'Python') {
+              broadcastTerminal('python commands are only available for Python projects', 'err');
+              return;
+            }
+            if (args.length === 0) {
+              broadcastTerminal('Usage: python <filename>', 'err');
+              return;
+            }
+            const modulesDir = path.join(pDir, 'modules');
+            const envVars = { ...process.env, PYTHONPATH: modulesDir };
+            const pythonCmd = 'python3 ' + args.join(' ');
+            broadcastTerminal('Running: ' + pythonCmd, 'info');
+            cp.exec(pythonCmd, { cwd: pDir, shell: true, env: envVars, timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+              if (stdout) broadcastTerminal(stdout, 'info');
+              if (stderr) broadcastTerminal(stderr, 'warn');
+              if (err) {
+                broadcastTerminal('Command failed: ' + err.message, 'err');
+              } else {
+                broadcastTerminal('Command completed successfully', 'ok');
+              }
+            });
+          } else if (command === 'node') {
+            if (p.lang === 'Python') {
+              broadcastTerminal('node commands are only available for Node.js projects', 'err');
+              return;
+            }
+            if (args.length === 0) {
+              broadcastTerminal('Usage: node <filename>', 'err');
+              return;
+            }
+            const nodeCmd = 'node ' + args.join(' ');
+            broadcastTerminal('Running: ' + nodeCmd, 'info');
+            cp.exec(nodeCmd, { cwd: pDir, shell: true, timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
+              if (stdout) broadcastTerminal(stdout, 'info');
+              if (stderr) broadcastTerminal(stderr, 'warn');
+              if (err) {
+                broadcastTerminal('Command failed: ' + err.message, 'err');
+              } else {
+                broadcastTerminal('Command completed successfully', 'ok');
+              }
+            });
+          } else {
+            broadcastTerminal('Unknown command: ' + command + '. Type "help" for available commands.', 'err');
+          }
+        }
+      }
     } catch (e) {}
   });
   ws.on('close', () => wsClients.delete(ws));
