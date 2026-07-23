@@ -31,6 +31,7 @@ const API_BASE = (() => {
 const state = {
   page: "projects",
   projects: [],
+  sharedProjects: [],
   currentProject: null,
   showNewModal: false,
   loading: false,
@@ -203,6 +204,15 @@ function checkInbox() {
   });
 }
 
+function fetchSharedProjects() {
+  fetch('/api/shared-projects').then(r => r.json()).then(data => {
+    if (data.success && data.projects) {
+      state.sharedProjects = data.projects;
+      scheduleRender();
+    }
+  }).catch(() => {});
+}
+
 function checkShareInvites() {
   fetch('/api/share-invites').then(r => r.json()).then(data => {
     if (data.success && data.invites && data.invites.length) {
@@ -225,6 +235,7 @@ function acknowledgeShareInvite(invite) {
       if (pd && pd.projects) state.projects = pd.projects;
       state.page = 'projects';
       history.pushState(null, '', '/dashboard');
+      fetchSharedProjects();
       scheduleRender();
     }).catch(() => scheduleRender());
   });
@@ -1171,6 +1182,7 @@ function render() {
   if (existing) existing.remove();
   document.querySelectorAll('.ai-chat-overlay').forEach(el => el.remove());
   document.querySelectorAll('.share-modal-overlay, .settings-modal-overlay, .password-gate-overlay').forEach(el => el.remove());
+  document.querySelectorAll('.inbox-notification-overlay').forEach(el => el.remove());
   if (state.showSearchModal) {
     document.body.appendChild(renderSearchModal());
   }
@@ -1256,7 +1268,7 @@ function renderProjectsPage() {
     )
   );
 
-  if (state.projects.length === 0) {
+  if (state.projects.length === 0 && state.sharedProjects.length === 0) {
     page.appendChild(el("div", { className: "empty-state" },
       el("div", { className: "empty-icon" }, svgIcon("folder")),
       el("div", { className: "empty-title" }, "No projects yet"),
@@ -1266,11 +1278,22 @@ function renderProjectsPage() {
       )
     ));
   } else {
-    const grid = el("div", { className: "projects-grid" });
     const term = (state.searchTerm || "").toLowerCase().trim();
-    const filtered = term ? state.projects.filter(function(p){ return (p.name || "").toLowerCase().indexOf(term) !== -1 || (p.lang || "").toLowerCase().indexOf(term) !== -1 || (p.serverType || "").toLowerCase().indexOf(term) !== -1; }) : state.projects;
-    filtered.forEach(p => grid.appendChild(renderProjectCard(p)));
-    page.appendChild(grid);
+    if (state.projects.length > 0) {
+      const grid = el("div", { className: "projects-grid" });
+      const filtered = term ? state.projects.filter(function(p){ return (p.name || "").toLowerCase().indexOf(term) !== -1 || (p.lang || "").toLowerCase().indexOf(term) !== -1 || (p.serverType || "").toLowerCase().indexOf(term) !== -1; }) : state.projects;
+      filtered.forEach(p => grid.appendChild(renderProjectCard(p)));
+      page.appendChild(grid);
+    }
+    if (state.sharedProjects.length > 0) {
+      const filteredShared = term ? state.sharedProjects.filter(function(p){ return (p.name || "").toLowerCase().indexOf(term) !== -1 || (p.lang || "").toLowerCase().indexOf(term) !== -1 || (p.owner || "").toLowerCase().indexOf(term) !== -1; }) : state.sharedProjects;
+      if (filteredShared.length > 0) {
+        page.appendChild(el("div", { className: "shared-section-title" }, "Shared with you"));
+        const sharedGrid = el("div", { className: "projects-grid" });
+        filteredShared.forEach(p => sharedGrid.appendChild(renderSharedProjectCard(p)));
+        page.appendChild(sharedGrid);
+      }
+    }
   }
   
   frag.appendChild(page);
@@ -1300,6 +1323,26 @@ function renderProjectCard(p) {
   }
   actions.appendChild(el("button", { className: "btn-delete", onClick: () => deleteProject(p.id) }, "Delete"));
 
+  return el("div", { className: "project-card" + (isMc ? " mc" : " discord") },
+    el("div", { className: "card-top" },
+      el("div", { className: "card-icon " + (isMc ? "mc" : "discord") }, svgIcon(isMc ? "pickaxe" : "discord"))
+    ),
+    el("div", { className: "card-name" }, p.name),
+    tags,
+    actions
+  );
+}
+
+function renderSharedProjectCard(p) {
+  const isMc = p.type === "minecraft";
+  const tags = el("div", { className: "card-tags" },
+    el("span", { className: "tag" }, isMc ? (p.serverType || "Minecraft") : (p.lang || "")),
+    el("span", { className: "tag " + (p.running ? "running" : "stopped") }, p.running ? "Running" : "Stopped"),
+    el("span", { className: "tag shared-tag" }, "Shared with " + p.owner)
+  );
+  const actions = el("div", { className: "card-actions" },
+    el("button", { className: "btn-manage", onClick: () => openProject(p.id) }, p.locked ? "Unlock" : "Manage")
+  );
   return el("div", { className: "project-card" + (isMc ? " mc" : " discord") },
     el("div", { className: "card-top" },
       el("div", { className: "card-icon " + (isMc ? "mc" : "discord") }, svgIcon(isMc ? "pickaxe" : "discord"))
@@ -1427,8 +1470,10 @@ function createProject() {
 }
 
 function openProject(id) {
-  const p = state.projects.find(p => p.id === id);
+  let p = state.projects.find(p => p.id === id);
+  if (!p) p = state.sharedProjects.find(p => String(p.id) === String(id));
   if (!p) return;
+  p.files = p.files || {};
   const slug = p.name.toLowerCase().replace(/\s+/g, '-');
   history.pushState(null, '', '/dashboard/' + slug);
   state.currentProject = p;
@@ -2982,6 +3027,7 @@ fetch("/api/me").then(r => r.json()).then(d => {
     if (pd && pd.projects) state.projects = pd.projects;
     checkInbox();
     checkShareInvites();
+    fetchSharedProjects();
     if (window.RebootDevice) {
       window.RebootDevice.init({ root: "html", onDetected: function(info) {
         document.body.setAttribute("data-device", info.type);
