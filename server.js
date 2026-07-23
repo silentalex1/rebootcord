@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const net = require('net');
 const WebSocket = require('ws');
 const path = require('path');
 const crypto = require('crypto');
@@ -12,54 +13,26 @@ const util = require('util');
 const helmet = require('helmet');
 const expressRateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
+const { pipeline } = require('stream/promises');
 
 const execAsync = util.promisify(cp.exec);
+const IS_WIN = process.platform === 'win32';
+const MC_PROXY_PORT = parseInt(process.env.MC_PROXY_PORT || '25565', 10);
+const startingLocks = {};
+const installLocks = {};
 
 process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err);
+  try { console.error('uncaughtException', err && err.message ? err.message : err); } catch (e) {}
 });
-process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason);
+process.on('unhandledRejection', (err) => {
+  try { console.error('unhandledRejection', err && err.message ? err.message : err); } catch (e) {}
 });
 
 const app = express();
-app.set('trust proxy', 1);
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
-
-const SDK_MIME = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.map': 'application/json; charset=utf-8' };
-function safeJoinSdk(base, name) {
-  const resolved = path.resolve(base, name);
-  if (!resolved.startsWith(path.resolve(base) + path.sep) && resolved !== path.resolve(base)) return null;
-  return resolved;
-}
-app.use('/sdk', (req, res, next) => {
-  const ext = path.extname(req.path).toLowerCase();
-  if (SDK_MIME[ext]) res.type(SDK_MIME[ext]);
-  res.setHeader('Cache-Control', 'no-cache');
-  next();
-}, express.static(path.join(__dirname, 'sdk'), {
-  setHeaders: (res, filePath) => {
-    const ext = path.extname(filePath).toLowerCase();
-    if (SDK_MIME[ext]) res.setHeader('Content-Type', SDK_MIME[ext]);
-    res.setHeader('Cache-Control', 'no-cache');
-  }
-}));
-app.get('/sdk/:file', (req, res, next) => {
-  const target = safeJoinSdk(path.join(__dirname, 'sdk'), req.params.file);
-  if (!target || !fs.existsSync(target)) return next();
-  const ext = path.extname(target).toLowerCase();
-  if (SDK_MIME[ext]) res.type(SDK_MIME[ext]);
-  res.setHeader('Cache-Control', 'no-cache');
-  fs.createReadStream(target).pipe(res);
-});
-const DATA_DIR = process.env.RC_DATA_DIR || path.join(__dirname, 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-const TMP_UPLOAD_DIR = path.join(DATA_DIR, 'tmp-uploads');
-if (!fs.existsSync(TMP_UPLOAD_DIR)) fs.mkdirSync(TMP_UPLOAD_DIR, { recursive: true });
-
 const upload = multer({ 
-  dest: TMP_UPLOAD_DIR,
+  dest: 'uploads/',
   limits: { fileSize: 200 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = ['.js', '.py', '.json', '.txt', '.md', '.jar', '.zip', '.tar', '.gz', '.html', '.css', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.env', '.sh', '.bat', '.ps1', '.ts', '.tsx', '.jsx', '.vue', '.svelte', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.hpp', '.php', '.rb', '.swift', '.kt', '.xml', '.sql', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.eot'];
@@ -85,16 +58,24 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+app.set('trust proxy', 1);
+
 const limiter = expressRateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
-  message: { success: false, message: 'Too many requests, please try again later.' }
+  max: 2000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests, please try again later.' },
+  skip: (req) => {
+    const p = req.path || '';
+    return /\/(start|stop|kill|dir|file|detect-deps|backup|command)$/.test(p) || p.includes('/start') || p.includes('/stop') || p.includes('/kill');
+  }
 });
 app.use('/api/', limiter);
 
 const authLimiter = expressRateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 30,
   message: { success: false, message: 'Too many login attempts, please try again later.' }
 });
 app.use('/login', authLimiter);
@@ -102,59 +83,49 @@ app.use('/register', authLimiter);
 
 const apiLimiter = expressRateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 100,
   message: { success: false, message: 'Too many API requests, please try again later.' }
 });
 app.use('/api/createcode', apiLimiter);
 
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-const PROJECTS_DIR = path.join(DATA_DIR, 'projects_data');
+const DB_FILE = path.join(__dirname, 'db.json');
+const PROJECTS_DIR = path.join(__dirname, 'projects_data');
 const SECRET = process.env.SESSION_SECRET || 'rebootcord-secret-key';
 
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 
-const RC_B64_MARKER = '\u0000RCB64\u0000';
-function bufferToStoredString(buf) {
-  const sample = buf.slice(0, 8000);
-  let suspicious = 0;
-  for (let i = 0; i < sample.length; i++) {
-    const c = sample[i];
-    if (c === 0) suspicious += 1000;
-    else if (c < 7 || (c > 13 && c < 32)) suspicious++;
-  }
-  const isBinary = sample.length > 0 && (suspicious / sample.length) > 0.02;
-  return isBinary ? (RC_B64_MARKER + buf.toString('base64')) : buf.toString('utf8');
-}
-function storedStringToBuffer(str) {
-  if (typeof str === 'string' && str.startsWith(RC_B64_MARKER)) return Buffer.from(str.slice(RC_B64_MARKER.length), 'base64');
-  return Buffer.from(str == null ? '' : String(str), 'utf8');
-}
-
 function loadDB() {
-  try { if (fs.existsSync(DB_FILE)) { const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8')); if(!d.changelogs) d.changelogs=[]; if(!d.apiKeys) d.apiKeys=[]; if(!d.feedbacks) d.feedbacks=[]; if(!d.feedbackChats) d.feedbackChats={}; if(!d.inboxMessages) d.inboxMessages=[]; if(!d.shareInvites) d.shareInvites=[]; return d; } } catch(e) {}
-  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: 25565, changelogs: [], apiKeys: [], feedbacks: [], feedbackChats: {}, inboxMessages: [], shareInvites: [] };
+  try { if (fs.existsSync(DB_FILE)) { const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8')); if(!d.changelogs) d.changelogs=[]; if(!d.apiKeys) d.apiKeys=[]; if(!d.feedbacks) d.feedbacks=[]; if(!d.feedbackChats) d.feedbackChats={}; if(!d.mcPorts || d.mcPorts === MC_PROXY_PORT) d.mcPorts = MC_PROXY_PORT + 1; return d; } } catch(e) {}
+  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: MC_PROXY_PORT + 1, changelogs: [], apiKeys: [], feedbacks: [], feedbackChats: {} };
 }
 
-let saveDBPending = false;
-let saveDBTimer = null;
-function saveDBNow() {
-  try {
-    const tmp = DB_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
-    fs.renameSync(tmp, DB_FILE);
-    saveDBPending = false;
-  } catch(e) { console.error('[saveDB]', e); }
+function collectUsedMcPorts() {
+  const used = new Set([MC_PROXY_PORT]);
+  for (const user of db.users || []) {
+    for (const p of user.projects || []) {
+      if (p.type === 'minecraft' && p.port) used.add(Number(p.port));
+    }
+  }
+  return used;
 }
+
+function allocateMcPort(preferred) {
+  const used = collectUsedMcPorts();
+  let port = Number(preferred) || 0;
+  if (port && !used.has(port) && port !== MC_PROXY_PORT && port > 1024 && port < 65535) return port;
+  db.mcPorts = db.mcPorts || (MC_PROXY_PORT + 1);
+  if (db.mcPorts === MC_PROXY_PORT) db.mcPorts++;
+  while (used.has(db.mcPorts) || db.mcPorts === MC_PROXY_PORT || db.mcPorts < 1024) {
+    db.mcPorts++;
+    if (db.mcPorts > 65000) db.mcPorts = MC_PROXY_PORT + 1;
+  }
+  port = db.mcPorts++;
+  return port;
+}
+
 function saveDB() {
-  saveDBPending = true;
-  if (saveDBTimer) return;
-  saveDBTimer = setTimeout(() => { saveDBTimer = null; saveDBNow(); }, 150);
+  try { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); } catch(e) {}
 }
-setInterval(() => { if (saveDBPending) saveDBNow(); }, 10000);
-['SIGINT', 'SIGTERM'].forEach((sig) => {
-  process.on(sig, () => { saveDBNow(); process.exit(0); });
-});
-process.on('exit', () => { if (saveDBPending) saveDBNow(); });
 
 let db = loadDB();
 const procs = {};
@@ -216,10 +187,8 @@ function scanProjectDeps(pDir, lang) {
     if (fs.existsSync(reqPath)) {
       try {
         fs.readFileSync(reqPath, 'utf8').split(/\r?\n/).forEach((line) => {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('-')) return;
-          const name = trimmed.split(/[=<>!~\[; ]/)[0].trim();
-          if (name) set.add(name.toLowerCase() === 'discord' ? 'discord.py' : name);
+          const name = line.split(/[=<>!~\[; ]/)[0].trim();
+          if (name) set.add(name);
         });
       } catch (e) {}
     }
@@ -236,28 +205,6 @@ function scanProjectDeps(pDir, lang) {
   return Array.from(set);
 }
 
-function parseEnvFile(content) {
-  const out = {};
-  content.split(/\r?\n/).forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) return;
-    const idx = trimmed.indexOf('=');
-    if (idx === -1) return;
-    let key = trimmed.slice(0, idx).trim();
-    let val = trimmed.slice(idx + 1).trim();
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1);
-    }
-    if (key) out[key] = val;
-  });
-  return out;
-}
-
-function depsHash(pkgs) {
-  const sorted = Array.from(new Set(pkgs)).map(p => String(p).toLowerCase()).sort();
-  return crypto.createHash('sha256').update(sorted.join(',')).digest('hex');
-}
-
 function sanitizePkgName(name) {
   const v = String(name || '').trim();
   if (!/^[a-zA-Z0-9_.\-\[\]@/]+$/.test(v)) return null;
@@ -265,18 +212,11 @@ function sanitizePkgName(name) {
   return v;
 }
 
-const HIDDEN_TREE_DIRS = new Set(['modules', 'node_modules', '__pycache__', '.git']);
-const HIDDEN_TREE_EXTS = new Set(['.pyc', '.pyo', '.so', '.dist-info', '.egg-info']);
-
 function getDirTree(dir, base) {
   const res = [];
   let ents = [];
   try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return res; }
   for (const ent of ents) {
-    if (!base && HIDDEN_TREE_DIRS.has(ent.name)) continue;
-    if (ent.name.endsWith('.dist-info') || ent.name.endsWith('.egg-info')) continue;
-    const ext = path.extname(ent.name).toLowerCase();
-    if (!ent.isDirectory() && HIDDEN_TREE_EXTS.has(ext)) continue;
     const full = path.join(dir, ent.name);
     let stat;
     try { stat = fs.statSync(full); } catch (e) { continue; }
@@ -321,17 +261,606 @@ function sanitizeInput(input) {
 }
 
 function verifyToken(token) {
-  if (!token) return null;
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const expected = crypto.createHmac('sha256', SECRET).update(parts[0]).digest('base64');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(parts[1] || '');
+  if (a.length !== b.length) return null;
   try {
-    const parts = token.split('.');
-    if (parts.length !== 2) return null;
-    const expectedBuf = Buffer.from(crypto.createHmac('sha256', SECRET).update(parts[0]).digest('base64'));
-    const givenBuf = Buffer.from(parts[1]);
-    if (expectedBuf.length !== givenBuf.length) return null;
-    if (!crypto.timingSafeEqual(expectedBuf, givenBuf)) return null;
-    return JSON.parse(Buffer.from(parts[0], 'base64').toString()).u;
+    if (!crypto.timingSafeEqual(a, b)) return null;
   } catch (e) {
     return null;
+  }
+  try { return JSON.parse(Buffer.from(parts[0], 'base64').toString()).u; } catch (e) { return null; }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeDomain(d) {
+  return String(d || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '')
+    .replace(/\.$/, '');
+}
+
+function isValidDomain(d) {
+  const v = normalizeDomain(d);
+  if (!v || v.length > 253) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) return true;
+  return /^(?=.{1,253}$)(?!-)[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(v);
+}
+
+function findProjectByDomain(host) {
+  const h = normalizeDomain(host);
+  if (!h) return null;
+  for (const user of db.users || []) {
+    for (const p of user.projects || []) {
+      if (p.type !== 'minecraft') continue;
+      const domains = [p.ip, p.customDomain, p.domain].filter(Boolean).map(normalizeDomain);
+      if (domains.includes(h)) return { username: user.username, user, p };
+    }
+  }
+  return null;
+}
+
+function killProcessTree(proc) {
+  if (!proc) return;
+  const pid = proc.pid;
+  try {
+    if (IS_WIN && pid) {
+      try { cp.execSync('taskkill /pid ' + pid + ' /T /F', { stdio: 'ignore', windowsHide: true }); } catch (e) {}
+    } else if (pid) {
+      try { process.kill(-pid, 'SIGKILL'); } catch (e) {
+        try { process.kill(pid, 'SIGKILL'); } catch (e2) {}
+      }
+    }
+  } catch (e) {}
+  try { proc.kill('SIGKILL'); } catch (e) {}
+}
+
+async function downloadFile(url, dest, onProgress) {
+  const tmp = dest + '.part';
+  try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch (e) {}
+  const response = await axios({
+    url,
+    method: 'GET',
+    responseType: 'stream',
+    timeout: 15 * 60 * 1000,
+    maxRedirects: 10,
+    headers: { 'User-Agent': 'RebootCord-Host/2.0', Accept: '*/*' },
+    validateStatus: (s) => s >= 200 && s < 400
+  });
+  const total = parseInt(response.headers['content-length'] || '0', 10);
+  let done = 0;
+  let lastPct = -1;
+  response.data.on('data', (chunk) => {
+    done += chunk.length;
+    if (total > 0 && typeof onProgress === 'function') {
+      const pct = Math.floor((done / total) * 100);
+      if (pct >= lastPct + 5 || pct === 100) {
+        lastPct = pct;
+        onProgress(pct, done, total);
+      }
+    }
+  });
+  await pipeline(response.data, fs.createWriteStream(tmp));
+  const st = fs.statSync(tmp);
+  if (!st.size || st.size < 1024) {
+    try { fs.unlinkSync(tmp); } catch (e) {}
+    throw new Error('Downloaded file is empty or invalid');
+  }
+  try { if (fs.existsSync(dest)) fs.unlinkSync(dest); } catch (e) {}
+  fs.renameSync(tmp, dest);
+  return st.size;
+}
+
+function needsModernJava(version) {
+  const v = String(version || '');
+  if (/^\d{2}(\.|$)/.test(v)) return 25;
+  const m = v.match(/^1\.(\d+)/);
+  if (m && parseInt(m[1], 10) >= 21) return 21;
+  if (m && parseInt(m[1], 10) >= 17) return 17;
+  return 8;
+}
+
+function findJavaBinary(rootDir) {
+  if (!rootDir || !fs.existsSync(rootDir)) return null;
+  const direct = path.join(rootDir, 'bin', IS_WIN ? 'java.exe' : 'java');
+  if (fs.existsSync(direct)) return direct;
+  const walk = (dir, depth) => {
+    if (depth > 6) return null;
+    let ents = [];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return null; }
+    for (const ent of ents) {
+      if (!ent.isDirectory()) continue;
+      const full = path.join(dir, ent.name);
+      if (ent.name === 'bin') {
+        const j = path.join(full, IS_WIN ? 'java.exe' : 'java');
+        if (fs.existsSync(j)) return j;
+      }
+      const found = walk(full, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  };
+  return walk(rootDir, 0);
+}
+
+async function ensureJava(u, pId, version) {
+  const minMajor = needsModernJava(version);
+  const tryCmds = IS_WIN ? ['java', 'java.exe'] : ['java'];
+  for (const cmd of tryCmds) {
+    try {
+      const { stderr, stdout } = await execAsync(cmd + ' -version', { shell: true, timeout: 15000 });
+      const out = (stderr || '') + (stdout || '');
+      const m = out.match(/version\s+"?(\d+)/i);
+      const major = m ? parseInt(m[1], 10) : 0;
+      if (major >= minMajor || (major === 1 && out.includes('1.8') && minMajor <= 8)) return cmd;
+      if (major > 0 && major < minMajor) continue;
+      if (out) return cmd;
+    } catch (e) {}
+  }
+  const jreDir = path.join(PROJECTS_DIR, 'jre' + minMajor);
+  const existing = findJavaBinary(jreDir);
+  if (existing) return existing;
+  broadcastLog(u, pId, '[System] Java ' + minMajor + '+ not found. Downloading portable JRE...', 'sys');
+  const urls = IS_WIN
+    ? {
+        25: 'https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk',
+        21: 'https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk',
+        17: 'https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jre/hotspot/normal/eclipse?project=jdk'
+      }
+    : {
+        25: 'https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jre/hotspot/normal/eclipse?project=jdk',
+        21: 'https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jre/hotspot/normal/eclipse?project=jdk',
+        17: 'https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jre/hotspot/normal/eclipse?project=jdk'
+      };
+  const url = urls[minMajor] || urls[21];
+  const archive = path.join(PROJECTS_DIR, 'jre-download' + (IS_WIN ? '.zip' : '.tar.gz'));
+  await downloadFile(url, archive, (pct) => {
+    if (pct % 20 === 0) broadcastLog(u, pId, '[System] JRE download ' + pct + '%', 'sys');
+  });
+  if (fs.existsSync(jreDir)) fs.rmSync(jreDir, { recursive: true, force: true });
+  fs.mkdirSync(jreDir, { recursive: true });
+  if (IS_WIN) {
+    await execAsync('powershell -NoProfile -Command "Expand-Archive -Path \'' + archive.replace(/'/g, "''") + '\' -DestinationPath \'' + jreDir.replace(/'/g, "''") + '\' -Force"', { timeout: 300000, shell: true });
+    try { fs.unlinkSync(archive); } catch (e) {}
+    const found = findJavaBinary(jreDir);
+    if (found) return found;
+  } else {
+    await execAsync('tar -xzf "' + archive + '" -C "' + jreDir + '" --strip-components=1', { timeout: 300000, shell: true });
+    try { fs.unlinkSync(archive); } catch (e) {}
+    const found = findJavaBinary(jreDir);
+    if (found) return found;
+  }
+  throw new Error('Failed to install portable Java ' + minMajor);
+}
+
+async function resolveServerJarUrl(serverType, version) {
+  const type = String(serverType || 'Vanilla').toLowerCase();
+  const ver = String(version || '1.21.5');
+  const headers = { 'User-Agent': 'RebootCord-Host/2.0', Accept: 'application/json' };
+
+  if (type === 'paper' || type === 'spigot') {
+    try {
+      const builds = await axios.get('https://fill.papermc.io/v3/projects/paper/versions/' + encodeURIComponent(ver) + '/builds', { headers, timeout: 30000 });
+      const list = Array.isArray(builds.data) ? builds.data : [];
+      if (!list.length) throw new Error('No Paper builds for ' + ver);
+      const url = list[0].downloads && list[0].downloads['server:default'] && list[0].downloads['server:default'].url;
+      if (!url) throw new Error('Paper download URL missing');
+      return { url, label: type === 'spigot' ? 'Paper (Spigot-compatible)' : 'Paper', jarName: 'server.jar' };
+    } catch (e) {
+      if (type === 'spigot') {
+        const gb = 'https://download.getbukkit.org/spigot/spigot-' + ver + '.jar';
+        return { url: gb, label: 'Spigot', jarName: 'server.jar' };
+      }
+      throw e;
+    }
+  }
+
+  if (type === 'purpur') {
+    const meta = await axios.get('https://api.purpurmc.org/v2/purpur/' + encodeURIComponent(ver), { headers, timeout: 30000 });
+    const latest = meta.data && meta.data.builds && meta.data.builds.latest;
+    if (!latest) throw new Error('No Purpur build for ' + ver);
+    return {
+      url: 'https://api.purpurmc.org/v2/purpur/' + encodeURIComponent(ver) + '/' + latest + '/download',
+      label: 'Purpur',
+      jarName: 'server.jar'
+    };
+  }
+
+  if (type === 'fabric') {
+    const loaders = await axios.get('https://meta.fabricmc.net/v2/versions/loader/' + encodeURIComponent(ver), { headers, timeout: 30000 });
+    const list = Array.isArray(loaders.data) ? loaders.data : [];
+    const loader = (list.find((x) => x.loader && x.loader.stable) || list[0] || {}).loader;
+    if (!loader || !loader.version) throw new Error('No Fabric loader for ' + ver);
+    const installers = await axios.get('https://meta.fabricmc.net/v2/versions/installer', { headers, timeout: 30000 });
+    const instList = Array.isArray(installers.data) ? installers.data : [];
+    const installer = instList.find((x) => x.stable) || instList[0];
+    if (!installer) throw new Error('No Fabric installer');
+    return {
+      url: 'https://meta.fabricmc.net/v2/versions/loader/' + encodeURIComponent(ver) + '/' + loader.version + '/' + installer.version + '/server/jar',
+      label: 'Fabric',
+      jarName: 'server.jar'
+    };
+  }
+
+  if (type === 'forge') {
+    const metaXml = await axios.get('https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml', { headers, timeout: 30000, responseType: 'text' });
+    const versions = String(metaXml.data || '').match(/<version>([^<]+)<\/version>/g) || [];
+    const ids = versions.map((v) => v.replace(/<\/?version>/g, ''));
+    const match = ids.filter((id) => id.startsWith(ver + '-')).pop() || ids.filter((id) => id.startsWith(ver)).pop();
+    if (!match) throw new Error('No Forge build for ' + ver);
+    return {
+      url: 'https://maven.minecraftforge.net/net/minecraftforge/forge/' + match + '/forge-' + match + '-installer.jar',
+      label: 'Forge',
+      jarName: 'forge-installer.jar',
+      forgeVersion: match,
+      isInstaller: true
+    };
+  }
+
+  const man = await axios.get('https://launchermeta.mojang.com/mc/game/version_manifest_v2.json', { headers, timeout: 30000 });
+  const verEntry = (man.data.versions || []).find((v) => v.id === ver);
+  if (!verEntry) throw new Error('Vanilla version not found: ' + ver);
+  const vinfo = await axios.get(verEntry.url, { headers, timeout: 30000 });
+  const serverUrl = vinfo.data && vinfo.data.downloads && vinfo.data.downloads.server && vinfo.data.downloads.server.url;
+  if (!serverUrl) throw new Error('Vanilla server jar URL missing for ' + ver);
+  return { url: serverUrl, label: 'Vanilla', jarName: 'server.jar' };
+}
+
+async function ensureMcServerJar(u, p, pDir) {
+  const jarPath = path.join(pDir, 'server.jar');
+  const marker = path.join(pDir, '.rc-server-meta.json');
+  const metaWant = { type: p.serverType || 'Vanilla', version: p.version || '1.21.5' };
+  let metaHave = null;
+  try { if (fs.existsSync(marker)) metaHave = JSON.parse(fs.readFileSync(marker, 'utf8')); } catch (e) {}
+  const jarOk = fs.existsSync(jarPath) && fs.statSync(jarPath).size > 10000;
+  if (jarOk && metaHave && metaHave.type === metaWant.type && metaHave.version === metaWant.version) {
+    return jarPath;
+  }
+  if (jarOk && !metaHave) {
+    fs.writeFileSync(marker, JSON.stringify(metaWant));
+    return jarPath;
+  }
+
+  broadcastLog(u, p.id, '[System] Resolving ' + metaWant.type + ' ' + metaWant.version + ' download...', 'sys');
+  const info = await resolveServerJarUrl(metaWant.type, metaWant.version);
+  broadcastLog(u, p.id, '[System] Downloading ' + info.label + ' ' + metaWant.version + '...', 'sys');
+
+  if (info.isInstaller) {
+    const installerPath = path.join(pDir, 'forge-installer.jar');
+    await downloadFile(info.url, installerPath, (pct) => {
+      if (pct % 10 === 0) broadcastLog(u, p.id, '[System] Download ' + pct + '%', 'sys');
+    });
+    const javaCmd = await ensureJava(u, p.id, metaWant.version);
+    broadcastLog(u, p.id, '[System] Installing Forge server libraries...', 'sys');
+    await execAsync('"' + javaCmd + '" -jar forge-installer.jar --installServer', { cwd: pDir, shell: true, timeout: 10 * 60 * 1000, maxBuffer: 20 * 1024 * 1024 });
+    const candidates = fs.readdirSync(pDir).filter((n) => /forge/i.test(n) && n.endsWith('.jar') && !n.includes('installer'));
+    let runJar = candidates.sort((a, b) => fs.statSync(path.join(pDir, b)).size - fs.statSync(path.join(pDir, a)).size)[0];
+    if (!runJar) {
+      const walkArgs = (dir, base) => {
+        let found = null;
+        let ents = [];
+        try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return null; }
+        for (const ent of ents) {
+          const rel = base ? base + '/' + ent.name : ent.name;
+          if (ent.isDirectory()) {
+            found = walkArgs(path.join(dir, ent.name), rel);
+            if (found) return found;
+          } else if (ent.name === 'unix_args.txt' || ent.name === 'win_args.txt') {
+            if (IS_WIN && ent.name === 'win_args.txt') return rel;
+            if (!IS_WIN && ent.name === 'unix_args.txt') return rel;
+            found = found || rel;
+          }
+        }
+        return found;
+      };
+      const unixArgs = walkArgs(pDir, '');
+      if (unixArgs) {
+        fs.writeFileSync(marker, JSON.stringify({ ...metaWant, forgeArgs: String(unixArgs).replace(/\\/g, '/') }));
+        broadcastLog(u, p.id, '[System] Forge install complete.', 'ok');
+        return path.join(pDir, 'server.jar');
+      }
+      throw new Error('Forge install finished but no server jar found');
+    }
+    fs.copyFileSync(path.join(pDir, runJar), jarPath);
+    try { fs.unlinkSync(installerPath); } catch (e) {}
+    fs.writeFileSync(marker, JSON.stringify(metaWant));
+    broadcastLog(u, p.id, '[System] Forge install complete.', 'ok');
+    return jarPath;
+  }
+
+  await downloadFile(info.url, jarPath, (pct) => {
+    if (pct % 10 === 0) broadcastLog(u, p.id, '[System] Download ' + pct + '%', 'sys');
+  });
+  fs.writeFileSync(marker, JSON.stringify(metaWant));
+  broadcastLog(u, p.id, '[System] Download complete (' + Math.round(fs.statSync(jarPath).size / 1024 / 1024) + ' MB).', 'ok');
+  return jarPath;
+}
+
+function writeMcConfig(p, pDir) {
+  if (!p.port || Number(p.port) === MC_PROXY_PORT) {
+    p.port = allocateMcPort(p.port);
+  }
+  fs.writeFileSync(path.join(pDir, 'eula.txt'), 'eula=true\n');
+  const domain = normalizeDomain(p.customDomain || p.ip || '');
+  const propsPath = path.join(pDir, 'server.properties');
+  let existing = {};
+  if (fs.existsSync(propsPath)) {
+    try {
+      fs.readFileSync(propsPath, 'utf8').split(/\r?\n/).forEach((line) => {
+        const i = line.indexOf('=');
+        if (i > 0 && !line.trim().startsWith('#')) existing[line.slice(0, i).trim()] = line.slice(i + 1);
+      });
+    } catch (e) {}
+  }
+  existing['server-port'] = String(p.port);
+  existing['server-ip'] = '0.0.0.0';
+  existing['online-mode'] = 'false';
+  existing['motd'] = String(p.name || existing.motd || 'Minecraft Server').replace(/[\r\n=]/g, ' ');
+  existing['max-players'] = existing['max-players'] || '20';
+  existing['spawn-protection'] = existing['spawn-protection'] || '0';
+  existing['view-distance'] = existing['view-distance'] || '8';
+  existing['simulation-distance'] = existing['simulation-distance'] || '6';
+  existing['network-compression-threshold'] = existing['network-compression-threshold'] || '256';
+  existing['enable-query'] = 'false';
+  existing['enable-rcon'] = 'false';
+  existing['pvp'] = existing['pvp'] || 'true';
+  existing['difficulty'] = existing['difficulty'] || 'easy';
+  existing['gamemode'] = existing['gamemode'] || 'survival';
+  existing['white-list'] = existing['white-list'] || 'false';
+  existing['enforce-whitelist'] = existing['enforce-whitelist'] || 'false';
+  existing['prevent-proxy-connections'] = 'false';
+  if (domain) existing['server-name'] = domain;
+  const lines = Object.keys(existing).map((k) => k + '=' + existing[k]);
+  fs.writeFileSync(propsPath, lines.join('\n') + '\n');
+}
+
+function procKey(id) {
+  return String(id);
+}
+
+function attachProcLogs(u, p, proc) {
+  const key = procKey(p.id);
+  procs[key] = proc;
+  proc.on('error', (err) => {
+    broadcastLog(u, p.id, '[System] Process failed: ' + err.message, 'err');
+    p.running = false;
+    saveDB();
+    if (procs[key] === proc) delete procs[key];
+  });
+  const onData = (buf, kind) => {
+    String(buf).split(/\r?\n/).forEach((line) => {
+      if (!line.trim()) return;
+      let type = kind;
+      if (p.type === 'minecraft') {
+        type = 'server';
+        if (line.includes('Preparing level')) broadcastLog(u, p.id, '[System] World created', 'ok');
+        if (line.includes('Done (')) {
+          const host = p.customDomain || p.ip || 'play.server.net';
+          broadcastLog(u, p.id, '[System] your ' + host + ':' + p.port + ' has successfully started', 'ok');
+        }
+        if (/ERROR|Exception|FATAL/i.test(line)) type = 'err';
+      } else {
+        if (line.includes('INFO') || line.includes('discord.gateway') || line.includes('Logged in as') || line.includes('ready') || line.includes('Bot starting')) type = 'ok';
+        else if (kind === 'stderr') type = 'err';
+        const match = line.match(/ModuleNotFoundError: No module named '([^']+)'/);
+        if (match && match[1]) broadcastLog(u, p.id, 'Missing package: ' + match[1], 'err');
+        const nm = line.match(/Cannot find module '([^']+)'/);
+        if (nm && nm[1]) broadcastLog(u, p.id, 'Missing package: ' + nm[1], 'err');
+      }
+      broadcastLog(u, p.id, line.trim(), type);
+    });
+  };
+  if (proc.stdout) proc.stdout.on('data', (d) => onData(d, 'info'));
+  if (proc.stderr) proc.stderr.on('data', (d) => onData(d, 'stderr'));
+  proc.on('close', (code) => {
+    if (procs[key] === proc) delete procs[key];
+    p.running = false;
+    saveDB();
+    broadcastLog(u, p.id, '[System] Process exited' + (code != null ? ' (' + code + ')' : '') + '.', 'sys');
+    broadcastEvent(u, { event: 'status', projectId: p.id, running: false });
+  });
+}
+
+async function stopProjectProcess(u, p, force) {
+  const key = procKey(p.id);
+  const proc = procs[key];
+  if (!proc) {
+    p.running = false;
+    saveDB();
+    return true;
+  }
+  try {
+    if (!force && p.type === 'minecraft' && proc.stdin && !proc.stdin.destroyed) {
+      try { proc.stdin.write('stop\n'); } catch (e) {}
+      for (let i = 0; i < 40; i++) {
+        await sleep(250);
+        if (!procs[key]) break;
+      }
+    } else if (!force && p.type === 'discord') {
+      try {
+        if (proc.stdin && !proc.stdin.destroyed) proc.stdin.end();
+      } catch (e) {}
+      try { proc.kill(IS_WIN ? undefined : 'SIGTERM'); } catch (e) {}
+      for (let i = 0; i < 20; i++) {
+        await sleep(200);
+        if (!procs[key]) break;
+      }
+    }
+  } catch (e) {}
+  if (procs[key]) {
+    killProcessTree(procs[key]);
+    delete procs[key];
+  }
+  p.running = false;
+  saveDB();
+  return true;
+}
+
+function resolveBotCommand(p, pDir) {
+  const lang = p.lang || 'JavaScript';
+  let mainFile = Object.keys(p.files || {})[0] || (lang === 'Python' ? 'main.py' : 'index.js');
+  const preferred = lang === 'Python' ? ['main.py', 'bot.py', 'app.py'] : ['index.js', 'bot.js', 'main.js', 'src/index.js'];
+  for (const f of preferred) {
+    if (fs.existsSync(path.join(pDir, f))) { mainFile = f; break; }
+  }
+  if (lang === 'Python') {
+    const py = IS_WIN ? 'python' : 'python3';
+    return { cmd: py, args: ['-u', mainFile], envExtra: { PYTHONPATH: path.join(pDir, 'modules') + (IS_WIN ? ';' : ':') + (process.env.PYTHONPATH || '') } };
+  }
+  if (lang === 'TypeScript') {
+    const tsEntry = fs.existsSync(path.join(pDir, 'index.ts')) ? 'index.ts' : mainFile.endsWith('.ts') ? mainFile : 'index.js';
+    if (fs.existsSync(path.join(pDir, 'node_modules', 'ts-node'))) {
+      return { cmd: 'npx', args: ['ts-node', tsEntry], envExtra: {} };
+    }
+    return { cmd: 'node', args: [mainFile.endsWith('.js') ? mainFile : 'index.js'], envExtra: {} };
+  }
+  return { cmd: 'node', args: [mainFile], envExtra: { NODE_PATH: path.join(pDir, 'node_modules') } };
+}
+
+function readVarInt(buf, offset) {
+  let num = 0;
+  let shift = 0;
+  let pos = offset;
+  while (pos < buf.length) {
+    const b = buf[pos++];
+    num |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) return { value: num, size: pos - offset };
+    shift += 7;
+    if (shift > 35) return null;
+  }
+  return null;
+}
+
+function parseMcHandshakeHost(buffer) {
+  try {
+    let offset = 0;
+    const packetLen = readVarInt(buffer, offset);
+    if (!packetLen) return null;
+    offset += packetLen.size;
+    const packetId = readVarInt(buffer, offset);
+    if (!packetId || packetId.value !== 0) return null;
+    offset += packetId.size;
+    const proto = readVarInt(buffer, offset);
+    if (!proto) return null;
+    offset += proto.size;
+    const strLen = readVarInt(buffer, offset);
+    if (!strLen) return null;
+    offset += strLen.size;
+    if (offset + strLen.value > buffer.length) return null;
+    const address = buffer.slice(offset, offset + strLen.value).toString('utf8');
+    return normalizeDomain(address.split('\0')[0]);
+  } catch (e) {
+    return null;
+  }
+}
+
+function startMcDomainProxy() {
+  const proxy = net.createServer((client) => {
+    let buffered = Buffer.alloc(0);
+    let handed = false;
+    const onData = (chunk) => {
+      if (handed) return;
+      buffered = Buffer.concat([buffered, chunk]);
+      if (buffered.length < 3) return;
+      const host = parseMcHandshakeHost(buffered);
+      if (!host && buffered.length < 1024) return;
+      handed = true;
+      client.removeListener('data', onData);
+      const mapped = host ? findProjectByDomain(host) : null;
+      const targetPort = mapped && mapped.p && mapped.p.running ? mapped.p.port : null;
+      if (!targetPort) {
+        try { client.destroy(); } catch (e) {}
+        return;
+      }
+      const upstream = net.connect({ host: '127.0.0.1', port: targetPort }, () => {
+        upstream.write(buffered);
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
+      upstream.on('error', () => { try { client.destroy(); } catch (e) {} });
+      client.on('error', () => { try { upstream.destroy(); } catch (e) {} });
+      client.on('close', () => { try { upstream.destroy(); } catch (e) {} });
+    };
+    client.on('data', onData);
+    client.on('error', () => {});
+    client.setTimeout(15000, () => { try { client.destroy(); } catch (e) {} });
+  });
+  proxy.on('error', (err) => {
+    console.error('MC domain proxy bind failed:', err.message);
+  });
+  proxy.listen(MC_PROXY_PORT, '0.0.0.0', () => {
+    console.log('Minecraft custom-domain proxy listening on ' + MC_PROXY_PORT);
+  });
+}
+
+async function installPythonPackages(pDir, pkgs, broadcast) {
+  try {
+    const modulesDir = path.join(pDir, 'modules');
+    if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
+    const req = path.join(pDir, 'requirements.txt');
+    let cur = fs.existsSync(req) ? fs.readFileSync(req, 'utf8') : '';
+    const set = new Set(cur.split(/\r?\n/).map((s) => s.trim()).filter(Boolean));
+    pkgs.forEach((pk) => set.add(pk));
+    fs.writeFileSync(req, Array.from(set).join('\n') + (set.size ? '\n' : ''));
+    const py = IS_WIN ? 'python' : 'python3';
+    const pipCmds = [
+      py + ' -m pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary -r requirements.txt --target ./modules',
+      'pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary -r requirements.txt --target ./modules',
+      'pip3 install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary -r requirements.txt --target ./modules'
+    ];
+    let lastErr = null;
+    for (const cmd of pipCmds) {
+      try {
+        if (broadcast) broadcast('[PKG] Running ' + cmd + '...');
+        await execAsync(cmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 50 * 1024 * 1024 });
+        return true;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('pip install failed');
+  } catch (e) {
+    throw e;
+  }
+}
+
+async function installNodePackages(pDir, pkgs, broadcast) {
+  try {
+    const pj = path.join(pDir, 'package.json');
+    let obj = { name: 'bot', version: '1.0.0', private: true, dependencies: {} };
+    if (fs.existsSync(pj)) {
+      try { obj = JSON.parse(fs.readFileSync(pj, 'utf8')); } catch (e) {}
+    }
+    obj.dependencies = obj.dependencies || {};
+    pkgs.forEach((pk) => { if (!obj.dependencies[pk]) obj.dependencies[pk] = '*'; });
+    fs.writeFileSync(pj, JSON.stringify(obj, null, 2));
+    const cmds = [
+      'npm install --no-audit --no-fund --prefer-offline',
+      'npm install --no-audit --no-fund'
+    ];
+    let lastErr = null;
+    for (const cmd of cmds) {
+      try {
+        if (broadcast) broadcast('[PKG] Running ' + cmd + '...');
+        await execAsync(cmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 50 * 1024 * 1024 });
+        return true;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('npm install failed');
+  } catch (e) {
+    throw e;
   }
 }
 
@@ -358,113 +887,22 @@ function clearCookie(res) {
   res.setHeader('Set-Cookie', 'rc_tok=; HttpOnly; Path=/; Max-Age=0');
 }
 
-const unlockedAccess = {};
-
-function findOwnerAndProject(id) {
-  for (const owner of db.users) {
-    const p = (owner.projects || []).find(x => String(x.id) === String(id));
-    if (p) return { owner, p };
-  }
-  return { owner: null, p: null };
-}
-
-function getAccess(u, id) {
-  const { owner, p } = findOwnerAndProject(id);
-  if (!p) return { p: null };
-  const isOwner = !!owner && owner.username === u;
-  const share = (p.shared || []).find(x => x.username === u);
-  const perms = share ? share.perms : { editFiles: false, changeName: false, fullAccess: false };
-  const isShared = !!share;
-  const locked = !!p.password && !isOwner && !unlockedAccess[u + '::' + id];
-  return { owner, p, isOwner, isShared, perms, locked, hasAccess: isOwner || isShared };
-}
-
-function canControl(access) {
-  return access.isOwner || (access.hasAccess && access.perms.fullAccess);
-}
-
-function canEditFiles(access) {
-  return access.isOwner || (access.hasAccess && (access.perms.editFiles || access.perms.fullAccess));
-}
-
-function findProjectOwner(projectId) {
-  for (const owner of db.users || []) {
-    const p = (owner.projects || []).find(x => String(x.id) === String(projectId));
-    if (p) return { owner, p };
-  }
-  return null;
-}
-
-function projectAudience(projectId) {
-  const found = findProjectOwner(projectId);
-  if (!found) return [];
-  const names = new Set([found.owner.username]);
-  (found.p.shared || []).forEach(s => { if (s && s.username) names.add(s.username); });
-  return Array.from(names);
-}
-
 function broadcastLog(username, projectId, msg, type) {
-  const payload = JSON.stringify({ event: 'log', projectId, msg, type: type || 'info', ts: Date.now() });
-  const audience = new Set([username].concat(projectAudience(projectId)));
+  const payload = JSON.stringify({ event: 'log', projectId, msg, type: type || 'info' });
   for (const client of wsClients) {
-    if (audience.has(client.username) && client.readyState === WebSocket.OPEN) {
-      try { client.send(payload); } catch (e) {}
+    if (client.username === username && client.readyState === WebSocket.OPEN) {
+      client.send(payload);
     }
   }
 }
 
 function broadcastEvent(username, payload) {
-  const data = JSON.stringify(Object.assign({ ts: Date.now() }, payload));
+  const data = JSON.stringify(payload);
   for (const client of wsClients) {
     if (client.username === username && client.readyState === WebSocket.OPEN) {
-      try { client.send(data); } catch (e) {}
+      client.send(data);
     }
   }
-}
-
-function broadcastInboxMessage(msg) {
-  const payload = JSON.stringify({
-    event: 'inboxMessage',
-    ts: Date.now(),
-    message: {
-      id: msg.id,
-      title: msg.title,
-      body: msg.body,
-      sender: msg.sender || null,
-      rank: msg.rank || null,
-      recipient: msg.recipient || null
-    }
-  });
-  for (const client of wsClients) {
-    if (client.readyState !== WebSocket.OPEN) continue;
-    if (msg.recipient && client.username !== msg.recipient) continue;
-    try { client.send(payload); } catch (e) {}
-  }
-}
-
-function broadcastProjectStatus(projectId, running) {
-  const payload = JSON.stringify({ event: 'status', projectId, running: !!running, ts: Date.now() });
-  const audience = projectAudience(projectId);
-  for (const client of wsClients) {
-    if (audience.includes(client.username) && client.readyState === WebSocket.OPEN) {
-      try { client.send(payload); } catch (e) {}
-    }
-  }
-}
-
-function forceKillProjectProcess(projectId) {
-  const proc = procs[projectId];
-  if (!proc) return false;
-  try { killProcessTree(proc, 'SIGKILL'); } catch (e) {}
-  try {
-    if (proc.pid) {
-      try { process.kill(proc.pid, 'SIGKILL'); } catch (e2) {}
-      try { process.kill(-proc.pid, 'SIGKILL'); } catch (e3) {}
-    }
-  } catch (e) {}
-  try { if (typeof proc.kill === 'function') proc.kill('SIGKILL'); } catch (e4) {}
-  delete procs[projectId];
-  return true;
 }
 
 wss.on('connection', (ws, req) => {
@@ -472,132 +910,136 @@ wss.on('connection', (ws, req) => {
   const user = verifyToken(token);
   if (!user) return ws.close();
   ws.username = user;
-  ws.isAlive = true;
   wsClients.add(ws);
-  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', (msg) => {
     try {
       const data = JSON.parse(msg);
-      if (data.event === 'ping') {
-        if (ws.readyState === WebSocket.OPEN) {
-          try { ws.send(JSON.stringify({ event: 'pong', t: data.t || Date.now() })); } catch (e) {}
-        }
-        return;
-      }
-      if (data.event === 'cmd' && data.projectId && procs[data.projectId]) {
-        procs[data.projectId].stdin.write(data.cmd + '\n');
+      if (data.event === 'cmd' && data.projectId && procs[procKey(data.projectId)]) {
+        try {
+          const proc = procs[procKey(data.projectId)];
+          if (proc.stdin && !proc.stdin.destroyed) proc.stdin.write(String(data.cmd || '') + '\n');
+        } catch (e) {}
       }
       if (data.event === 'install' && data.projectId) {
-        const uObj = db.users.find(u => u.username === user);
-        if (!uObj) return;
-        const p = uObj.projects.find(x => String(x.id) === String(data.projectId));
-        if (p) {
+        try {
+          const uObj = db.users.find(u => u.username === user);
+          if (!uObj) return;
+          const p = uObj.projects.find(x => String(x.id) === String(data.projectId));
+          if (!p) return;
+          const lockKey = String(p.id);
+          if (installLocks[lockKey]) {
+            broadcastLog(user, p.id, '[PKG] Install already in progress', 'warn');
+            return;
+          }
           const pkg = sanitizePkgName(data.pkg);
           if (!pkg) {
-            broadcastLog(user, p.id, `[PKG] Invalid package name`, 'err');
+            broadcastLog(user, p.id, '[PKG] Invalid package name', 'err');
+            broadcastEvent(user, { event: 'installDone', projectId: p.id, pkg: data.pkg, success: false });
             return;
           }
           const pDir = path.join(PROJECTS_DIR, String(p.id));
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-          if (p.lang === 'Python') {
-            const modulesDir = path.join(pDir, 'modules');
-            if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
-          }
-          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary --upgrade "${pkg}" --target ./modules` : `npm install --no-audit --no-fund --prefer-offline "${pkg}"`;
-          broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 8 * 60 * 1000, maxBuffer: 1024 * 1024 * 30 }, (err, stdout, stderr) => {
-            if (stdout) broadcastLog(user, p.id, stdout, 'info');
-            if (stderr) broadcastLog(user, p.id, stderr, 'warn');
-            if (err) broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
-            else { broadcastLog(user, p.id, `[PKG] Installed ${pkg}`, 'ok'); p.depsInstalled = false; saveDB(); }
-            broadcastEvent(user, { event: 'installDone', projectId: p.id, pkg, success: !err });
-          });
+          installLocks[lockKey] = true;
+          (async () => {
+            try {
+              const log = (m) => broadcastLog(user, p.id, m, 'info');
+              if (p.lang === 'Python') await installPythonPackages(pDir, [pkg], log);
+              else await installNodePackages(pDir, [pkg], log);
+              broadcastLog(user, p.id, '[PKG] Installed ' + pkg, 'ok');
+              broadcastEvent(user, { event: 'installDone', projectId: p.id, pkg, success: true });
+            } catch (err) {
+              broadcastLog(user, p.id, '[PKG] Failed: ' + (err.message || err), 'err');
+              broadcastEvent(user, { event: 'installDone', projectId: p.id, pkg, success: false });
+            } finally {
+              delete installLocks[lockKey];
+            }
+          })();
+        } catch (e) {
+          broadcastLog(user, data.projectId, '[PKG] Install failed: ' + (e.message || e), 'err');
         }
       }
       if (data.event === 'installAll' && data.projectId) {
-        const uObj = db.users.find(u => u.username === user);
-        if (!uObj) return;
-        const p = uObj.projects.find(x => String(x.id) === String(data.projectId));
-        if (p) {
+        try {
+          const uObj = db.users.find(u => u.username === user);
+          if (!uObj) return;
+          const p = uObj.projects.find(x => String(x.id) === String(data.projectId));
+          if (!p) return;
+          const lockKey = String(p.id);
+          if (installLocks[lockKey]) {
+            broadcastLog(user, p.id, '[PKG] Install already in progress', 'warn');
+            return;
+          }
           const pDir = path.join(PROJECTS_DIR, String(p.id));
           if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-          let pkgs = Array.isArray(data.pkgs) ? data.pkgs : [];
-          let scanned = [];
-          try { scanned = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) {}
-          const merged = new Set();
-          pkgs.concat(scanned).forEach((pk) => {
-            const safe = sanitizePkgName(pk);
-            if (safe) merged.add(safe);
-          });
-          pkgs = Array.from(merged);
-          if (!pkgs.length) {
-            broadcastLog(user, p.id, `[PKG] No dependencies found to install`, 'warn');
-            broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: true, count: 0 });
-            return;
-          }
-          const modulesDir = path.join(pDir, p.lang === 'Python' ? 'modules' : 'node_modules');
-          const newHash = depsHash(pkgs);
-          if (!data.force && p.depsInstalled && p.depsHash === newHash && fs.existsSync(modulesDir)) {
-            broadcastLog(user, p.id, `[PKG] Dependencies already up to date (${pkgs.length} package${pkgs.length === 1 ? '' : 's'})`, 'ok');
-            broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: true, count: pkgs.length, skipped: true });
-            return;
-          }
-          broadcastLog(user, p.id, `[PKG] Detected ${pkgs.length} dependenc${pkgs.length === 1 ? 'y' : 'ies'}${pkgs.length ? ': ' + pkgs.join(', ') : ''}`, 'info');
-          if (p.lang === 'Python') {
-            if (!fs.existsSync(modulesDir)) fs.mkdirSync(modulesDir, { recursive: true });
-            const req = path.join(pDir, 'requirements.txt');
-            let cur = fs.existsSync(req) ? fs.readFileSync(req, 'utf8') : '';
-            const set = new Set(cur.split(/\r?\n/).map(s => s.trim()).filter(Boolean));
-            pkgs.forEach(pk => set.add(pk));
-            fs.writeFileSync(req, Array.from(set).join('\n') + (set.size ? '\n' : ''));
-          } else {
-            const pj = path.join(pDir, 'package.json');
-            let obj = { name: 'bot', version: '1.0.0', dependencies: {} };
-            if (fs.existsSync(pj)) { try { obj = JSON.parse(fs.readFileSync(pj, 'utf8')); } catch (e) {} }
-            obj.dependencies = obj.dependencies || {};
-            pkgs.forEach(pk => { if (!obj.dependencies[pk]) obj.dependencies[pk] = '*'; });
-            fs.writeFileSync(pj, JSON.stringify(obj, null, 2));
-          }
-          const cmd = p.lang === 'Python' ? `pip install --disable-pip-version-check --no-input --no-cache-dir --prefer-binary --upgrade -r requirements.txt --target ./modules` : `npm install --no-audit --no-fund --prefer-offline --no-package-lock`;
-          broadcastLog(user, p.id, `[PKG] Running ${cmd}...`, 'info');
-          cp.exec(cmd, { cwd: pDir, shell: true, timeout: 15 * 60 * 1000, maxBuffer: 1024 * 1024 * 50 }, (err, stdout, stderr) => {
-            if (stdout) broadcastLog(user, p.id, stdout, 'info');
-            if (stderr) broadcastLog(user, p.id, stderr, 'warn');
-            if (err) {
-              broadcastLog(user, p.id, `[PKG] Failed: ${err.message}`, 'err');
-              p.depsInstalled = false;
-            } else {
-              broadcastLog(user, p.id, `[PKG] Installed all ${pkgs.length} package${pkgs.length === 1 ? '' : 's'} successfully`, 'ok');
-              p.depsInstalled = true;
-              p.depsHash = newHash;
-              saveDB();
+          installLocks[lockKey] = true;
+          (async () => {
+            try {
+              let pkgs = Array.isArray(data.pkgs) ? data.pkgs : [];
+              let scanned = [];
+              try { scanned = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) {}
+              const merged = new Set();
+              pkgs.concat(scanned).forEach((pk) => {
+                const safe = sanitizePkgName(pk);
+                if (safe) merged.add(safe);
+              });
+              pkgs = Array.from(merged);
+              broadcastLog(user, p.id, '[PKG] Detected ' + pkgs.length + ' dependenc' + (pkgs.length === 1 ? 'y' : 'ies') + (pkgs.length ? ': ' + pkgs.join(', ') : ''), 'info');
+              if (!pkgs.length) {
+                broadcastLog(user, p.id, '[PKG] No dependencies found to install', 'warn');
+                broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: true, count: 0 });
+                return;
+              }
+              const log = (m) => broadcastLog(user, p.id, m, 'info');
+              if (p.lang === 'Python') await installPythonPackages(pDir, pkgs, log);
+              else await installNodePackages(pDir, pkgs, log);
+              broadcastLog(user, p.id, '[PKG] Installed all ' + pkgs.length + ' package' + (pkgs.length === 1 ? '' : 's') + ' successfully', 'ok');
+              broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: true, count: pkgs.length });
+            } catch (err) {
+              broadcastLog(user, p.id, '[PKG] Failed: ' + (err.message || err), 'err');
+              broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: false, count: 0 });
+            } finally {
+              delete installLocks[lockKey];
             }
-            broadcastEvent(user, { event: 'installAllDone', projectId: p.id, success: !err, count: pkgs.length });
-          });
+          })();
+        } catch (e) {
+          broadcastLog(user, data.projectId, '[PKG] Install failed: ' + (e.message || e), 'err');
         }
       }
     } catch (e) {}
   });
   ws.on('close', () => wsClients.delete(ws));
-  ws.on('error', () => { try { wsClients.delete(ws); } catch (e) {} });
 });
 
-const wsHeartbeatInterval = setInterval(() => {
-  for (const client of wsClients) {
-    if (client.isAlive === false) {
-      try { client.terminate(); } catch (e) {}
-      wsClients.delete(client);
-      continue;
-    }
-    client.isAlive = false;
-    try { client.ping(); } catch (e) {
-      try { client.terminate(); } catch (e2) {}
-      wsClients.delete(client);
-    }
+app.use((req, res, next) => {
+  const host = normalizeDomain((req.headers.host || '').split(':')[0]);
+  if (!host || host === 'localhost' || host === '127.0.0.1' || host.endsWith('.onrender.com') || host === 'rebootcord.world' || host.endsWith('.rebootcord.world') || host.endsWith('.rebootcord.io')) {
+    return next();
   }
-}, 20000);
+  if (req.path.startsWith('/api/') || req.path.startsWith('/sdk/') || req.path.startsWith('/ws')) return next();
+  const mapped = findProjectByDomain(host);
+  if (!mapped) return next();
+  const p = mapped.p;
+  const connectHost = p.customDomain || p.ip || host;
+  const connectAddr = connectHost + (p.port && p.port !== 25565 ? ':' + p.port : '');
+  res.status(200).type('html').send(
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' +
+    String(p.name || 'Minecraft Server').replace(/[<>&]/g, '') +
+    '</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#050e05;color:#cfe8cf;font-family:Segoe UI,system-ui,sans-serif} .card{background:#0b160b;border:1px solid #1c381c;border-radius:14px;padding:28px;max-width:480px;width:92%} h1{margin:0 0 8px;font-size:22px;color:#7dffa0} .muted{color:#7a947a;font-size:13px} .ip{margin-top:16px;padding:12px 14px;border-radius:10px;background:#091209;border:1px solid #1c381c;font-family:ui-monospace,Consolas,monospace;color:#9cffb5;font-size:15px;word-break:break-all} .badge{display:inline-block;margin-top:12px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700;background:' +
+    (p.running ? '#14351d' : '#351414') +
+    ';color:' + (p.running ? '#7dffa0' : '#ff8e8e') +
+    '}</style></head><body><div class="card"><h1>' +
+    String(p.name || 'Minecraft Server').replace(/[<>&]/g, '') +
+    '</h1><div class="muted">' +
+    String(p.serverType || 'Vanilla') + ' ' + String(p.version || '') +
+    '</div><div class="badge">' + (p.running ? 'ONLINE' : 'OFFLINE') +
+    '</div><div class="muted" style="margin-top:16px">Connect in Minecraft Java with:</div><div class="ip">' +
+    String(connectAddr).replace(/[<>&]/g, '') +
+    '</div><div class="muted" style="margin-top:12px">Powered by RebootCord domain hosting</div></div></body></html>'
+  );
+});
 
 app.use(express.static(__dirname, { index: false }));
+app.use('/sdk', express.static(path.join(__dirname, 'sdk')));
 
 app.get('/', (req, res) => {
   if (getUser(req)) return res.redirect('/dashboard');
@@ -649,22 +1091,7 @@ app.post('/register', async (req, res) => {
   const hashedPassword = await bcrypt.hash(password, 10);
   db.users.push({ username, password: hashedPassword, invite: code, discordUsername: username, projects: [], admin: false });
   delete db.inviteCodes[code];
-  db.inboxMessages = db.inboxMessages || [];
-  const welcomeMsg = {
-    id: Date.now(),
-    title: 'Welcome to reboot world!',
-    body: 'this is a website where you can host your discord bots, and soon own minecraft world. Please follow ALL of the rules from the discord server.',
-    linkText: 'discord server.',
-    linkUrl: 'https://discord.gg/rNKcnJV72c',
-    ts: Date.now(),
-    readBy: [],
-    sender: 'Reboot Cord',
-    rank: 'notice',
-    recipient: username
-  };
-  db.inboxMessages.unshift(welcomeMsg);
   saveDB();
-  broadcastInboxMessage(welcomeMsg);
   setCookie(res, signToken(username));
   res.json({ success: true, username });
 });
@@ -699,7 +1126,12 @@ app.get('/api/projects', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false, projects: [] });
   const user = db.users.find(x => x.username === u);
-  res.json({ success: true, projects: (user && user.projects) || [] });
+  const projects = ((user && user.projects) || []).map((p) => {
+    const live = !!procs[procKey(p.id)];
+    if (p.running !== live && !startingLocks[procKey(p.id)]) p.running = live;
+    return p;
+  });
+  res.json({ success: true, projects });
 });
 
 app.post('/api/projects', (req, res) => {
@@ -707,25 +1139,20 @@ app.post('/api/projects', (req, res) => {
   if (!u) return res.json({ success: false });
   const user = db.users.find(x => x.username === u);
   if (!user) return res.json({ success: false });
-  const incoming = Array.isArray(req.body.projects) ? req.body.projects : [];
-  const keepIds = new Set(incoming.map(p => String(p.id)));
-  const previous = user.projects || [];
-  previous.forEach(oldP => {
-    if (!keepIds.has(String(oldP.id))) {
-      forceKillProjectProcess(oldP.id);
-      broadcastProjectStatus(oldP.id, false);
-      try {
-        const pDir = path.join(PROJECTS_DIR, String(oldP.id));
-        if (fs.existsSync(pDir)) fs.rmSync(pDir, { recursive: true, force: true });
-      } catch (e) {}
-    }
-  });
-  user.projects = incoming;
-  db.mcPorts = db.mcPorts || 25565;
+  user.projects = req.body.projects || [];
+  db.mcPorts = db.mcPorts || (MC_PROXY_PORT + 1);
   user.projects.forEach(p => {
-    if (p.type === 'minecraft' && !p.port) {
-      p.port = db.mcPorts++;
+    if (p.type === 'minecraft') {
+      if (!p.port || Number(p.port) === MC_PROXY_PORT) p.port = allocateMcPort(p.port);
+      if (p.ip && !p.customDomain) p.customDomain = normalizeDomain(p.ip);
+      if (p.customDomain) {
+        p.customDomain = normalizeDomain(p.customDomain);
+        p.domain = p.customDomain;
+        p.ip = p.customDomain;
+      }
     }
+    if (typeof p.running === 'undefined') p.running = false;
+    if (!startingLocks[procKey(p.id)]) p.running = !!procs[procKey(p.id)];
     const pDir = path.join(PROJECTS_DIR, String(p.id));
     if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
     if (p.files) {
@@ -734,302 +1161,12 @@ app.post('/api/projects', (req, res) => {
         if (!fs.existsSync(path.dirname(filePath))) {
           fs.mkdirSync(path.dirname(filePath), { recursive: true });
         }
-        fs.writeFileSync(filePath, storedStringToBuffer(p.files[fname]));
+        fs.writeFileSync(filePath, p.files[fname]);
       }
     }
   });
   saveDB();
   res.json({ success: true });
-});
-
-app.post('/api/projects/:id/delete', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const id = req.params.id;
-  const p = (user.projects || []).find(x => String(x.id) === String(id));
-  if (!p) return res.json({ success: false, message: 'Project not found.' });
-  forceKillProjectProcess(id);
-  p.running = false;
-  broadcastProjectStatus(id, false);
-  broadcastLog(u, id, '[System] Project deleted — process force killed and shut down.', 'warn');
-  (p.shared || []).forEach(s => {
-    if (s && s.username) {
-      broadcastEvent(s.username, { event: 'removedFromProject', projectId: id, projectName: p.name });
-      delete unlockedAccess[s.username + '::' + id];
-    }
-  });
-  user.projects = (user.projects || []).filter(x => String(x.id) !== String(id));
-  try {
-    const pDir = path.join(PROJECTS_DIR, String(id));
-    if (fs.existsSync(pDir)) fs.rmSync(pDir, { recursive: true, force: true });
-  } catch (e) {}
-  saveDB();
-  res.json({ success: true });
-});
-
-app.get('/api/projects/:id/access', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  if (!access.p) return res.json({ success: false, notFound: true });
-  if (!access.hasAccess) return res.json({ success: false, removed: true });
-  res.json({
-    success: true,
-    isOwner: access.isOwner,
-    isShared: access.isShared,
-    perms: access.perms,
-    locked: access.locked,
-    hasPassword: !!access.p.password,
-    password: access.isOwner ? (access.p.password || '') : '',
-    private: !!access.p.private,
-    name: access.p.name,
-    shared: access.isOwner ? (access.p.shared || []).map(s => ({ username: s.username, perms: s.perms })) : []
-  });
-});
-
-app.post('/api/projects/:id/unlock', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  if (!access.p) return res.json({ success: false });
-  if (!access.hasAccess) return res.json({ success: false, message: 'You do not have access to this project.' });
-  if (access.p.password && access.p.password === req.body.password) {
-    unlockedAccess[u + '::' + req.params.id] = true;
-    return res.json({ success: true });
-  }
-  res.json({ success: false, message: 'Incorrect password.' });
-});
-
-app.post('/api/projects/:id/share', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false, message: 'Project not found.' });
-  const target = (req.body.username || '').trim();
-  if (!target) return res.json({ success: false, message: 'Enter a username.' });
-  if (target === u) return res.json({ success: false, message: 'You cannot share with yourself.' });
-  const targetUser = db.users.find(x => x.username.toLowerCase() === target.toLowerCase());
-  if (!targetUser) return res.json({ success: false, message: 'That user does not exist.' });
-  p.shared = p.shared || [];
-  if (p.shared.find(x => x.username === targetUser.username)) return res.json({ success: false, message: 'Already shared with that user.' });
-  p.shared.push({ username: targetUser.username, perms: { editFiles: false, changeName: false, fullAccess: false } });
-  p.shareAddCounts = p.shareAddCounts || {};
-  const addKey = targetUser.username.toLowerCase();
-  p.shareAddCounts[addKey] = (Number(p.shareAddCounts[addKey]) || 0) + 1;
-  const addCount = p.shareAddCounts[addKey];
-  db.shareInvites = db.shareInvites || [];
-  db.shareInvites.push({
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-    recipient: targetUser.username,
-    sender: u,
-    projectId: p.id,
-    projectName: p.name,
-    ts: Date.now(),
-    seen: false
-  });
-  db.inboxMessages = db.inboxMessages || [];
-  let addBody = `${u} has added you to their ${p.name} project.`;
-  if (addCount >= 2) {
-    addBody = `${u} has added you to their ${p.name} project once again. (${addCount}x)`;
-  }
-  const addedMsg = {
-    id: Date.now(),
-    title: `Added to "${p.name}"`,
-    body: addBody,
-    ts: Date.now(),
-    readBy: [],
-    sender: u,
-    rank: 'notice',
-    recipient: targetUser.username,
-    addCount: addCount
-  };
-  db.inboxMessages.unshift(addedMsg);
-  saveDB();
-  broadcastInboxMessage(addedMsg);
-  broadcastEvent(targetUser.username, { event: 'addedToProject', projectId: p.id, projectName: p.name });
-  res.json({ success: true, shared: p.shared });
-});
-
-app.get('/api/share-invites', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false, invites: [] });
-  const invites = (db.shareInvites || []).filter(x => x.recipient === u && !x.seen);
-  res.json({ success: true, invites });
-});
-
-app.post('/api/share-invites/ack', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const inv = (db.shareInvites || []).find(x => x.id === req.body.id && x.recipient === u);
-  if (inv) { inv.seen = true; saveDB(); }
-  res.json({ success: true });
-});
-
-app.post('/api/projects/:id/unshare', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
-  const removedUser = req.body.username;
-  const wasShared = (p.shared || []).some(x => x.username === removedUser);
-  p.shared = (p.shared || []).filter(x => x.username !== removedUser);
-  delete unlockedAccess[removedUser + '::' + req.params.id];
-  if (wasShared) {
-    db.inboxMessages = db.inboxMessages || [];
-    const removedMsg = {
-      id: Date.now(),
-      title: `Removed from "${p.name}"`,
-      body: `${user.username} has removed you from their project.`,
-      ts: Date.now(),
-      readBy: [],
-      sender: user.username,
-      rank: 'removed',
-      recipient: removedUser
-    };
-    db.inboxMessages.unshift(removedMsg);
-    broadcastInboxMessage(removedMsg);
-  }
-  saveDB();
-  if (wasShared) broadcastEvent(removedUser, { event: 'removedFromProject', projectId: p.id, projectName: p.name });
-  res.json({ success: true, shared: p.shared });
-});
-
-app.post('/api/projects/:id/share-perms', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
-  const entry = (p.shared || []).find(x => x.username === req.body.username);
-  if (!entry) return res.json({ success: false });
-  entry.perms = {
-    editFiles: !!req.body.editFiles,
-    changeName: !!req.body.changeName,
-    fullAccess: !!req.body.fullAccess
-  };
-  saveDB();
-  res.json({ success: true, shared: p.shared });
-});
-
-app.post('/api/projects/:id/settings', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const user = db.users.find(x => x.username === u);
-  if (!user) return res.json({ success: false });
-  const p = (user.projects || []).find(x => String(x.id) === req.params.id);
-  if (!p) return res.json({ success: false });
-  if (typeof req.body.password === 'string') p.password = req.body.password.trim();
-  if (typeof req.body.private === 'boolean') p.private = req.body.private;
-  if (typeof req.body.name === 'string' && req.body.name.trim()) p.name = req.body.name.trim();
-  saveDB();
-  res.json({ success: true, name: p.name, private: !!p.private, hasPassword: !!p.password });
-});
-
-app.post('/api/projects/:id/rename-shared', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  if (!access.p || access.isOwner) return res.json({ success: false });
-  if (access.locked) return res.json({ success: false, needsPassword: true });
-  if (!access.perms.changeName && !access.perms.fullAccess) return res.json({ success: false, message: 'No permission to rename.' });
-  const name = (req.body.name || '').trim();
-  if (!name) return res.json({ success: false });
-  access.p.name = name;
-  saveDB();
-  res.json({ success: true, name });
-});
-
-app.get('/api/shared-projects', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false, projects: [] });
-  const out = [];
-  for (const owner of db.users) {
-    for (const p of (owner.projects || [])) {
-      const share = (p.shared || []).find(x => x.username === u);
-      if (share) {
-        out.push({
-          id: p.id, name: p.name, type: p.type, lang: p.lang, running: p.running,
-          owner: owner.username, perms: share.perms,
-          locked: !!p.password && !unlockedAccess[u + '::' + p.id]
-        });
-      }
-    }
-  }
-  res.json({ success: true, projects: out });
-});
-
-app.get('/api/inbox', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false, messages: [] });
-  const msgs = (db.inboxMessages || [])
-    .filter(m => !m.recipient || m.recipient === u)
-    .map(m => ({
-      id: m.id, title: m.title, body: m.body, ts: m.ts,
-      read: (m.readBy || []).includes(u),
-      sender: m.sender,
-      rank: m.rank,
-      linkText: m.linkText,
-      linkUrl: m.linkUrl
-    }));
-  res.json({ success: true, messages: msgs });
-});
-
-app.post('/api/inbox/delete', (req, res) => {
-  const user = requireAdmin(req, res);
-  if (!user) return res.json({ success: false });
-  db.inboxMessages = (db.inboxMessages || []).filter(x => String(x.id) !== String(req.body.id));
-  saveDB();
-  res.json({ success: true });
-});
-
-app.post('/api/inbox/read', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const m = (db.inboxMessages || []).find(x => String(x.id) === String(req.body.id));
-  if (m) {
-    m.readBy = m.readBy || [];
-    if (!m.readBy.includes(u)) m.readBy.push(u);
-    saveDB();
-  }
-  res.json({ success: true });
-});
-
-app.post('/api/inbox/send', (req, res) => {
-  const u = getUser(req);
-  const user = db.users.find(x => x.username === u);
-  if (!user || !user.admin) return res.json({ success: false, message: 'Admin only.' });
-  const title = (req.body.title || '').trim();
-  const body = (req.body.body || '').trim();
-  if (!title || !body) return res.json({ success: false });
-  db.inboxMessages = db.inboxMessages || [];
-  const adminMsg = { id: Date.now(), title, body, ts: Date.now(), readBy: [], sender: u, rank: 'staff' };
-  db.inboxMessages.unshift(adminMsg);
-  saveDB();
-  broadcastInboxMessage(adminMsg);
-  res.json({ success: true });
-});
-
-app.post('/api/inbox/discord', (req, res) => {
-  const message = (req.body.message || '').trim();
-  const sender = (req.body.sender || 'Staff').trim();
-  if (!message) return res.json({ success: false });
-  db.inboxMessages = db.inboxMessages || [];
-  const staffMsg = { id: Date.now(), title: `Message from ${sender}`, body: message, ts: Date.now(), readBy: [], sender, rank: 'staff' };
-  db.inboxMessages.unshift(staffMsg);
-  saveDB();
-  broadcastInboxMessage(staffMsg);
-  res.json({ success: true });
-});
-
-app.get('/inbox', (req, res) => {
-  res.sendFile(path.join(__dirname, 'inbox-system', 'inbox.html'));
 });
 
 app.post('/api/createcode', (req, res) => {
@@ -1057,11 +1194,6 @@ app.get('/api/stats', (req, res) => {
   res.json({ activeUsers: db.users.length, totalInvites: Object.keys(db.inviteCodes).length });
 });
 
-app.get('/api/users', (req, res) => {
-  const usernames = db.users.map(x => x.username).sort((a, b) => a.localeCompare(b));
-  res.json({ success: true, count: usernames.length, users: usernames });
-});
-
 app.post('/api/blacklist', (req, res) => {
   const { key } = req.body;
   if (key && !db.blacklisted.includes(key)) { db.blacklisted.push(key); saveDB(); }
@@ -1069,40 +1201,32 @@ app.post('/api/blacklist', (req, res) => {
 });
 
 app.get('/api/projects/:id/detect-deps', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false, packages: [] });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !access.hasAccess) return res.json({ success: false, packages: [] });
-  const pDir = path.join(PROJECTS_DIR, String(p.id));
-  let packages = [];
   try {
-    packages = scanProjectDeps(pDir, p.lang || 'Python');
-  } catch (e) {}
-  res.json({ success: true, packages });
-});
-
-app.get('/api/projects/:id/deps-status', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !access.hasAccess) return res.json({ success: false });
-  const pDir = path.join(PROJECTS_DIR, String(p.id));
-  let packages = [];
-  try { packages = scanProjectDeps(pDir, p.lang || 'Python'); } catch (e) {}
-  const modulesDir = path.join(pDir, p.lang === 'Python' ? 'modules' : 'node_modules');
-  const upToDate = !!p.depsInstalled && p.depsHash === depsHash(packages) && fs.existsSync(modulesDir);
-  res.json({ success: true, upToDate, packages });
+    const u = getUser(req);
+    if (!u) return res.json({ success: false, packages: [] });
+    const user = db.users.find(x => x.username === u);
+    if (!user) return res.json({ success: false, packages: [] });
+    const p = user.projects.find(x => String(x.id) === req.params.id);
+    if (!p) return res.json({ success: false, packages: [] });
+    const pDir = path.join(PROJECTS_DIR, String(p.id));
+    let packages = [];
+    if (fs.existsSync(pDir)) {
+      try {
+        packages = scanProjectDeps(pDir, p.lang || 'Python');
+      } catch (e) {}
+    }
+    res.json({ success: true, packages });
+  } catch (e) {
+    res.json({ success: false, packages: [] });
+  }
 });
 
 app.get('/api/projects/:id/dir', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false, files: [] });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !access.hasAccess) return res.json({ success: false, files: [] });
-  if (access.locked) return res.json({ success: false, files: [], needsPassword: true });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false, files: [] });
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   let files = [];
   try {
@@ -1116,10 +1240,9 @@ app.get('/api/projects/:id/dir', (req, res) => {
 app.get('/api/projects/:id/file', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !access.hasAccess) return res.json({ success: false });
-  if (access.locked) return res.json({ success: false, needsPassword: true });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
   const fname = req.query.name;
   const target = path.join(PROJECTS_DIR, String(p.id), fname);
   try {
@@ -1131,61 +1254,38 @@ app.get('/api/projects/:id/file', (req, res) => {
   res.json({ success: false });
 });
 
-app.post('/api/projects/:id/savefile', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !canEditFiles(access)) return res.json({ success: false });
-  if (access.locked) return res.json({ success: false, needsPassword: true });
-  const fname = req.body.name;
-  const content = req.body.content || '';
-  if (!fname) return res.json({ success: false });
-  const pDir = path.join(PROJECTS_DIR, String(p.id));
-  const target = path.join(pDir, fname);
-  try {
-    if (!fs.existsSync(path.dirname(target))) fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content);
-    p.files = p.files || {};
-    p.files[fname] = content;
-    saveDB();
-    res.json({ success: true });
-  } catch(e) {
-    res.json({ success: false });
-  }
-});
-
 app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
-  const u = getUser(req);
-  if (!u) { if (req.file) try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !canEditFiles(access)) { if (req.file) try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
-  if (access.locked) { if (req.file) try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false, needsPassword: true }); }
-  if (!req.file) return res.json({ success: false });
-
-  const pDir = path.join(PROJECTS_DIR, String(p.id));
-  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-
-  let relPath = (req.body && req.body.relPath) ? String(req.body.relPath).replace(/\\/g, '/') : req.file.originalname;
-  relPath = relPath.split('/').map(s => s.trim()).filter(s => s && s !== '.' && s !== '..').join('/');
-  if (!relPath) { try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
-
-  const target = safeJoin(pDir, relPath);
-  if (!target) { try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
-  const targetDir = path.dirname(target);
-  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-
   try {
-    fs.renameSync(req.file.path, target);
-    const buf = fs.readFileSync(target);
-    p.files = p.files || {};
-    p.files[relPath] = bufferToStoredString(buf);
-    saveDB();
-    broadcastLog(u, p.id, '[System] Uploaded ' + relPath, 'info');
-    res.json({ success: true, path: relPath });
+    const u = getUser(req);
+    if (!u) return res.json({ success: false });
+    const user = db.users.find(x => x.username === u);
+    if (!user) return res.json({ success: false });
+    const p = user.projects.find(x => String(x.id) === req.params.id);
+    if (!p) return res.json({ success: false });
+    if (!req.file) return res.json({ success: false });
+
+    const pDir = path.join(PROJECTS_DIR, String(p.id));
+    if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+
+    const relPath = (req.body && req.body.relPath) ? String(req.body.relPath).replace(/\\/g, '/') : req.file.originalname;
+    const target = safeJoin(pDir, relPath);
+    if (!target) { try { fs.unlinkSync(req.file.path); } catch(e) {} return res.json({ success: false }); }
+    const targetDir = path.dirname(target);
+    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+    try {
+      if (fs.existsSync(target)) {
+        fs.unlinkSync(target);
+      }
+      fs.renameSync(req.file.path, target);
+      broadcastLog(u, p.id, '[System] Uploaded ' + relPath, 'info');
+      res.json({ success: true });
+    } catch (e) {
+      try { fs.unlinkSync(req.file.path); } catch(cleanupError) {}
+      res.json({ success: false });
+    }
   } catch (e) {
-    try { if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch(e2) {}
+    try { if (req.file && req.file.path) fs.unlinkSync(req.file.path); } catch(cleanupError) {}
     res.json({ success: false });
   }
 });
@@ -1193,9 +1293,9 @@ app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
 app.post('/api/projects/:id/deleteFile', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (p && canEditFiles(access) && req.body.name) {
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (p && req.body.name) {
     const safe = safeJoin(path.join(PROJECTS_DIR, String(p.id)), req.body.name);
     if (!safe) return res.json({ success: false });
     try {
@@ -1211,9 +1311,9 @@ app.post('/api/projects/:id/deleteFile', (req, res) => {
 app.post('/api/projects/:id/touch', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (p && canEditFiles(access) && req.body.name) {
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (p && req.body.name) {
     const pDir = path.join(PROJECTS_DIR, String(p.id));
     const safe = safeJoin(pDir, req.body.name);
     if (!safe) return res.json({ success: false });
@@ -1228,9 +1328,9 @@ app.post('/api/projects/:id/touch', (req, res) => {
 app.post('/api/projects/:id/mkdir', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (p && canEditFiles(access) && req.body.name) {
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (p && req.body.name) {
     const pDir = path.join(PROJECTS_DIR, String(p.id));
     const safe = safeJoin(pDir, req.body.name);
     if (!safe) return res.json({ success: false });
@@ -1243,9 +1343,9 @@ app.post('/api/projects/:id/mkdir', (req, res) => {
 app.post('/api/projects/:id/backup', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !canControl(access)) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
   const ts = Date.now();
   const bname = 'backup_' + ts;
   p._mcBackups = p._mcBackups || [];
@@ -1266,16 +1366,16 @@ app.post('/api/projects/:id/backup', (req, res) => {
 app.post('/api/projects/:id/revert', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !canControl(access)) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  const p = user.projects.find(x => String(x.id) === req.params.id);
+  if (!p) return res.json({ success: false });
   const bname = req.body.dir;
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   const wDir = path.join(pDir, 'world');
   const target = path.join(pDir, bname);
   try {
     if (procs[p.id]) {
-      killProcessTree(procs[p.id], 'SIGKILL');
+      procs[p.id].kill();
       delete procs[p.id];
       p.running = false;
     }
@@ -1291,261 +1391,269 @@ app.post('/api/projects/:id/revert', (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/api/projects/:id/start', async (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !canControl(access)) return res.json({ success: false });
-  if (access.locked) return res.json({ success: false, needsPassword: true });
-
-  const pDir = path.join(PROJECTS_DIR, String(p.id));
-  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-
-  if (procs[p.id]) {
-    forceKillProjectProcess(p.id);
-  }
-
-  p.running = true;
-  saveDB();
-  broadcastProjectStatus(p.id, true);
-
-  if (p.type === 'minecraft') {
-    let javaCmd = 'java';
-    try {
-      await execAsync('java -version', { shell: true });
-    } catch (e) {
-      const jreDir = path.join(PROJECTS_DIR, 'jre');
-      const jreBin = path.join(jreDir, 'bin', 'java');
-      if (!fs.existsSync(jreBin)) {
-        broadcastLog(u, p.id, '[System] Java not found locally. Downloading portable JRE...', 'sys');
-        try {
-          await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR, shell: true });
-          await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR, shell: true });
-          broadcastLog(u, p.id, '[System] JRE downloaded successfully.', 'ok');
-        } catch (err) {
-          broadcastLog(u, p.id, '[System] Failed to download JRE: ' + err.message, 'err');
-        }
-      }
-      javaCmd = fs.existsSync(jreBin) ? jreBin : 'java';
-    }
-
-    let bindIp = '0.0.0.0';
-    if (p.ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(p.ip)) bindIp = p.ip;
-    fs.writeFileSync(path.join(pDir, 'eula.txt'), 'eula=true\n');
-    fs.writeFileSync(path.join(pDir, 'server.properties'), `server-port=${p.port}\nserver-ip=${bindIp}\nonline-mode=false\nmotd=${p.name || 'Minecraft Server'}\n`);
-    
-    const jarPath = path.join(pDir, 'server.jar');
-    if (!fs.existsSync(jarPath)) {
-      broadcastLog(u, p.id, '[System] Downloading Minecraft server for ' + (p.serverType || 'Vanilla') + ' ' + (p.version || '1.21.5') + '...', 'sys');
-      try {
-        if (p.serverType === 'Paper') {
-          const apiBase = 'https://api.papermc.io/v2/projects/paper';
-          const verRes = await axios.get(apiBase + '/versions/' + p.version);
-          const builds = verRes.data.builds;
-          const latestBuild = builds[builds.length - 1];
-          const dlUrl = apiBase + '/versions/' + p.version + '/builds/' + latestBuild + '/downloads/paper-' + p.version + '-' + latestBuild + '.jar';
-          await execAsync('curl -L -o server.jar "' + dlUrl + '"', { cwd: pDir, shell: true });
-        } else {
-          const man = await axios.get('https://launchermeta.mojang.com/mc/game/version_manifest.json');
-          const verEntry = man.data.versions.find(v => v.id === p.version);
-          if (verEntry) {
-            const vinfo = await axios.get(verEntry.url);
-            const serverUrl = vinfo.data.downloads.server.url;
-            await execAsync('curl -L -o server.jar "' + serverUrl + '"', { cwd: pDir, shell: true });
-          } else {
-            await execAsync('curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar', { cwd: pDir, shell: true });
-          }
-        }
-        broadcastLog(u, p.id, '[System] Download complete.', 'ok');
-      } catch (e) {
-        broadcastLog(u, p.id, '[System] Failed to download server jar: ' + e.message, 'err');
-      }
-    }
-    if (!fs.existsSync(jarPath)) {
-      broadcastLog(u, p.id, '[System] No server.jar found. Use Files tab to upload the correct server jar for this type/version, then Start again.', 'warn');
-    }
-    const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true, detached: true });
-    procs[p.id] = proc;
-
-    proc.on('error', (err) => {
-      broadcastLog(u, p.id, `[System] Server failed to start: ${err.message}`, 'err');
-    });
-    
-    proc.stdout.on('data', d => {
-      d.toString().split('\n').forEach(line => {
-        if (!line.trim()) return;
-        broadcastLog(u, p.id, line.trim(), 'server');
-        if (line.includes('Preparing level')) {
-          broadcastLog(u, p.id, '[System] World created', 'ok');
-        }
-        if (line.includes('Done (')) {
-          broadcastLog(u, p.id, `[System] your ${p.ip || 'play.server.net'}:${p.port} has successfully started`, 'ok');
-        }
-      });
-    });
-    
-    proc.stderr.on('data', d => {
-      d.toString().split('\n').forEach(line => {
-        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'warn');
-      });
-    });
-    
-    proc.on('close', () => {
-      if (procs[p.id] === proc) delete procs[p.id];
-      p.running = false;
-      saveDB();
-      broadcastProjectStatus(p.id, false);
-      broadcastLog(u, p.id, '[System] Process exited.', 'sys');
-    });
-
-  } else {
-    if (p.files) {
-      for (const fname of Object.keys(p.files)) {
-        const filePath = path.join(pDir, fname);
-        if (!fs.existsSync(path.dirname(filePath))) {
-          fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        }
-        fs.writeFileSync(filePath, storedStringToBuffer(p.files[fname]));
-      }
-    }
-    const mainFile = Object.keys(p.files || {})[0] || (p.lang === 'Python' ? 'main.py' : 'index.js');
-
-    const envVars = { ...process.env, BOT_TOKEN: p.botToken || '', TOKEN: p.botToken || '' };
-    const modulesDir = path.join(pDir, 'modules');
-    if (p.lang === 'Python') envVars.PYTHONPATH = modulesDir;
-
-    try {
-      const envP = path.join(pDir, '.env');
-      let ec = fs.existsSync(envP) ? fs.readFileSync(envP, 'utf8') : '';
-      if (p.botToken && !ec.match(/^BOT_TOKEN=/m)) {
-        ec = ec.trim() + `\nBOT_TOKEN=${p.botToken}\n`;
-        fs.writeFileSync(envP, ec.trim() + '\n');
-      }
-      const parsedEnv = parseEnvFile(ec);
-      Object.assign(envVars, parsedEnv);
-      if (parsedEnv.DISCORD_TOKEN && !parsedEnv.BOT_TOKEN) envVars.BOT_TOKEN = parsedEnv.DISCORD_TOKEN;
-      if (parsedEnv.TOKEN && !parsedEnv.BOT_TOKEN) envVars.BOT_TOKEN = parsedEnv.TOKEN;
-    } catch(e) {}
-
-    let cmd, args;
-    if (p.lang === 'Python') {
-      cmd = 'python3';
-      args = ['-u', '-c', 'import sys, runpy; modules_dir, main_file = sys.argv[1], sys.argv[2]; sys.path.insert(0, modules_dir); sys.argv = [main_file]; runpy.run_path(main_file, run_name="__main__")', modulesDir, mainFile];
-    } else {
-      cmd = 'node';
-      args = [mainFile];
-    }
-
-    const proc = cp.spawn(cmd, args, { cwd: pDir, env: envVars, shell: p.lang === 'Python' ? false : true, detached: true });
-    procs[p.id] = proc;
-    let missingPkgs = new Set();
-    proc.on('error', (err) => {
-      broadcastLog(u, p.id, `[System] Bot failed to start: ${err.message}`, 'err');
-      p.running = false;
-      saveDB();
-      broadcastProjectStatus(p.id, false);
-    });
-    proc.on('close', (code) => {
-      if (procs[p.id] === proc) delete procs[p.id];
-      p.running = false;
-      saveDB();
-      broadcastProjectStatus(p.id, false);
-      broadcastLog(u, p.id, '[System] Process exited ('+code+').', 'sys');
-    });
-
-    proc.stdout.on('data', d => {
-      d.toString().split('\n').forEach(line => {
-        if (line.trim()) broadcastLog(u, p.id, line.trim(), 'info');
-      });
-    });
-    
-    proc.stderr.on('data', d => {
-      d.toString().split('\n').forEach(line => {
-        if (!line.trim()) return;
-        if (line.includes('INFO') || line.includes('discord.gateway') || line.includes('discord.client') || line.includes('Logged in as')) {
-          broadcastLog(u, p.id, line.trim(), 'ok');
-        } else {
-          broadcastLog(u, p.id, line.trim(), 'err');
-          const match = line.match(/ModuleNotFoundError: No module named '([^']+)'/);
-          if (match && match[1]) {
-            missingPkgs.add(match[1]);
-          }
-        }
-      });
-    });
-    
-  }
-
-  res.json({ success: true });
-});
-
-function killProcessTree(proc, signal) {
-  if (!proc) return;
+app.get('/api/mc/versions', async (req, res) => {
   try {
-    if (proc.pid) process.kill(-proc.pid, signal);
-  } catch(e) {
-    try { if (proc.pid) process.kill(proc.pid, signal); } catch(e2) {}
-    try { proc.kill(signal); } catch(e3) {}
+    const man = await axios.get('https://launchermeta.mojang.com/mc/game/version_manifest_v2.json', {
+      timeout: 20000,
+      headers: { 'User-Agent': 'RebootCord-Host/2.0' }
+    });
+    const versions = (man.data.versions || []).filter((v) => v.type === 'release').map((v) => v.id);
+    res.json({ success: true, latest: man.data.latest, versions });
+  } catch (e) {
+    res.json({
+      success: true,
+      versions: [
+        '26.2', '26.1.2', '26.1.1', '26.1',
+        '1.21.11', '1.21.10', '1.21.9', '1.21.8', '1.21.7', '1.21.6', '1.21.5', '1.21.4', '1.21.3', '1.21.2', '1.21.1', '1.21',
+        '1.20.6', '1.20.5', '1.20.4', '1.20.3', '1.20.2', '1.20.1', '1.20',
+        '1.19.4', '1.19.3', '1.19.2', '1.19.1', '1.19',
+        '1.18.2', '1.18.1', '1.18', '1.17.1', '1.17',
+        '1.16.5', '1.16.4', '1.16.3', '1.16.2', '1.16.1', '1.16',
+        '1.15.2', '1.15.1', '1.15', '1.14.4', '1.14.3', '1.14.2', '1.14.1', '1.14',
+        '1.13.2', '1.13.1', '1.13', '1.12.2', '1.12.1', '1.12', '1.8.9', '1.8.8', '1.7.10'
+      ]
+    });
   }
-}
+});
 
-app.post('/api/projects/:id/stop', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !canControl(access)) return res.json({ success: false });
-
-  const proc = procs[p.id];
-  if (proc) {
-    killProcessTree(proc, 'SIGTERM');
-    setTimeout(() => {
-      if (procs[p.id] === proc) {
-        forceKillProjectProcess(p.id);
+app.post('/api/projects/:id/domain', (req, res) => {
+  try {
+    const u = getUser(req);
+    if (!u) return res.json({ success: false, message: 'Not logged in' });
+    const user = db.users.find((x) => x.username === u);
+    if (!user) return res.json({ success: false, message: 'User not found' });
+    const p = (user.projects || []).find((x) => String(x.id) === String(req.params.id));
+    if (!p || p.type !== 'minecraft') return res.json({ success: false, message: 'Minecraft project not found' });
+    const domain = normalizeDomain(req.body && (req.body.domain || req.body.ip || req.body.customDomain));
+    if (domain && !isValidDomain(domain)) return res.json({ success: false, message: 'Invalid domain' });
+    if (domain) {
+      const taken = findProjectByDomain(domain);
+      if (taken && String(taken.p.id) !== String(p.id)) {
+        return res.json({ success: false, message: 'Domain already assigned to another server' });
       }
-    }, 1200);
+    }
+    p.customDomain = domain || '';
+    p.ip = domain || p.ip || '';
+    p.domain = domain || '';
+    saveDB();
+    res.json({
+      success: true,
+      domain: p.customDomain,
+      port: p.port,
+      connect: (p.customDomain || p.ip || 'play.server.net') + (p.port ? ':' + p.port : ''),
+      proxyPort: MC_PROXY_PORT
+    });
+  } catch (e) {
+    res.json({ success: false, message: e.message || 'Failed' });
   }
-  p.running = false;
-  saveDB();
-  broadcastProjectStatus(p.id, false);
-  broadcastLog(u, p.id, '[System] Process stopped.', 'warn');
-  res.json({ success: true });
 });
 
-app.post('/api/projects/:id/kill', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.json({ success: false });
-  const access = getAccess(u, req.params.id);
-  const p = access.p;
-  if (!p || !canControl(access)) return res.json({ success: false });
+app.post('/api/projects/:id/start', async (req, res) => {
+  let responded = false;
+  const send = (body, code) => {
+    if (responded) return;
+    responded = true;
+    try { res.status(code || 200).json(body); } catch (e) {}
+  };
+  try {
+    const u = getUser(req);
+    if (!u) return send({ success: false, message: 'Not logged in' });
+    const user = db.users.find((x) => x.username === u);
+    if (!user) return send({ success: false, message: 'User not found' });
+    const p = (user.projects || []).find((x) => String(x.id) === String(req.params.id));
+    if (!p) return send({ success: false, message: 'Project not found' });
 
-  forceKillProjectProcess(p.id);
-  p.running = false;
-  saveDB();
-  broadcastProjectStatus(p.id, false);
-  broadcastLog(u, p.id, '[System] Process forcefully killed.', 'warn');
-  res.json({ success: true });
+    const lockKey = String(p.id);
+    if (startingLocks[lockKey]) return send({ success: false, message: 'Already starting' });
+    if (procs[procKey(p.id)] && !procs[procKey(p.id)].killed) {
+      p.running = true;
+      saveDB();
+      return send({ success: true, alreadyRunning: true, port: p.port, ip: p.ip || p.customDomain });
+    }
+
+    const pDir = path.join(PROJECTS_DIR, String(p.id));
+    if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+
+    startingLocks[lockKey] = true;
+    p.running = true;
+    saveDB();
+    send({
+      success: true,
+      starting: true,
+      port: p.port,
+      ip: p.customDomain || p.ip || null,
+      proxyPort: MC_PROXY_PORT
+    });
+
+    (async () => {
+      try {
+        if (procs[procKey(p.id)]) {
+          await stopProjectProcess(u, p, true);
+          p.running = true;
+          saveDB();
+        }
+
+        if (p.type === 'minecraft') {
+          if (p.ip && isValidDomain(p.ip) && !p.customDomain) p.customDomain = normalizeDomain(p.ip);
+          writeMcConfig(p, pDir);
+          broadcastLog(u, p.id, '[System] Preparing ' + (p.serverType || 'Vanilla') + ' ' + (p.version || '') + '...', 'sys');
+          const javaCmd = await ensureJava(u, p.id, p.version || '1.21.5');
+          await ensureMcServerJar(u, p, pDir);
+          const jarPath = path.join(pDir, 'server.jar');
+          if (!fs.existsSync(jarPath) || fs.statSync(jarPath).size < 1000) {
+            throw new Error('server.jar missing after download');
+          }
+          const marker = path.join(pDir, '.rc-server-meta.json');
+          let forgeArgs = null;
+          try {
+            if (fs.existsSync(marker)) {
+              const meta = JSON.parse(fs.readFileSync(marker, 'utf8'));
+              forgeArgs = meta.forgeArgs || null;
+            }
+          } catch (e) {}
+          let args;
+          if (forgeArgs) {
+            args = ['@user_jvm_args.txt', '@' + forgeArgs, 'nogui'];
+            if (!fs.existsSync(path.join(pDir, 'user_jvm_args.txt'))) {
+              fs.writeFileSync(path.join(pDir, 'user_jvm_args.txt'), '-Xmx1024M\n-Xms512M\n');
+            }
+          } else {
+            args = ['-Xmx1024M', '-Xms512M', '-jar', 'server.jar', 'nogui'];
+          }
+          broadcastLog(u, p.id, '[System] Launching Minecraft server on port ' + p.port + '...', 'sys');
+          const proc = cp.spawn(javaCmd, args, {
+            cwd: pDir,
+            shell: false,
+            windowsHide: true,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env }
+          });
+          attachProcLogs(u, p, proc);
+          broadcastEvent(u, { event: 'status', projectId: p.id, running: true });
+        } else {
+          if (p.files) {
+            for (const fname of Object.keys(p.files)) {
+              const filePath = path.join(pDir, fname);
+              if (!fs.existsSync(path.dirname(filePath))) fs.mkdirSync(path.dirname(filePath), { recursive: true });
+              fs.writeFileSync(filePath, p.files[fname]);
+            }
+          }
+          try {
+            const envP = path.join(pDir, '.env');
+            let ec = fs.existsSync(envP) ? fs.readFileSync(envP, 'utf8') : '';
+            if (p.botToken) {
+              if (!/^BOT_TOKEN=/m.test(ec)) ec = (ec.trim() + '\nBOT_TOKEN=' + p.botToken).trim() + '\n';
+              else ec = ec.replace(/^BOT_TOKEN=.*$/m, 'BOT_TOKEN=' + p.botToken);
+              if (!/^TOKEN=/m.test(ec)) ec = ec.trim() + '\nTOKEN=' + p.botToken + '\n';
+              fs.writeFileSync(envP, ec.trim() + '\n');
+            }
+          } catch (e) {}
+
+          const bot = resolveBotCommand(p, pDir);
+          const envVars = {
+            ...process.env,
+            BOT_TOKEN: p.botToken || process.env.BOT_TOKEN || '',
+            TOKEN: p.botToken || process.env.TOKEN || '',
+            DISCORD_TOKEN: p.botToken || process.env.DISCORD_TOKEN || '',
+            ...bot.envExtra
+          };
+          broadcastLog(u, p.id, '[System] Starting Discord bot host (' + (p.lang || 'JavaScript') + ')...', 'sys');
+          const mainPath = path.join(pDir, bot.args[bot.args.length - 1]);
+          if (!fs.existsSync(mainPath) && bot.cmd !== 'npx') {
+            throw new Error('Main bot file not found: ' + bot.args[bot.args.length - 1]);
+          }
+          const proc = cp.spawn(bot.cmd, bot.args, {
+            cwd: pDir,
+            env: envVars,
+            shell: IS_WIN,
+            windowsHide: true,
+            stdio: ['pipe', 'pipe', 'pipe']
+          });
+          attachProcLogs(u, p, proc);
+          broadcastLog(u, p.id, '[System] Bot process is running. Host online.', 'ok');
+          broadcastEvent(u, { event: 'status', projectId: p.id, running: true });
+        }
+      } catch (err) {
+        p.running = false;
+        saveDB();
+        if (procs[procKey(p.id)]) {
+          killProcessTree(procs[procKey(p.id)]);
+          delete procs[procKey(p.id)];
+        }
+        broadcastLog(u, p.id, '[System] Start failed: ' + (err && err.message ? err.message : String(err)), 'err');
+        broadcastEvent(u, { event: 'status', projectId: p.id, running: false });
+      } finally {
+        delete startingLocks[lockKey];
+      }
+    })();
+  } catch (e) {
+    send({ success: false, message: e.message || 'Start failed' });
+  }
 });
 
-function requireAdmin(req, res) {
-  const u = getUser(req);
-  if (!u) return null;
-  const user = db.users.find(x => x.username === u);
-  if (!user) return null;
-  const noAdminsYet = !db.users.some(x => x.admin);
-  if (noAdminsYet || user.admin) return user;
-  return null;
-}
+app.post('/api/projects/:id/stop', async (req, res) => {
+  try {
+    const u = getUser(req);
+    if (!u) return res.json({ success: false, message: 'Not logged in' });
+    const user = db.users.find((x) => x.username === u);
+    if (!user) return res.json({ success: false, message: 'User not found' });
+    const p = (user.projects || []).find((x) => String(x.id) === String(req.params.id));
+    if (!p) return res.json({ success: false, message: 'Project not found' });
+    res.json({ success: true, stopping: true });
+    broadcastLog(u, p.id, '[System] Stopping process...', 'warn');
+    await stopProjectProcess(u, p, false);
+    broadcastLog(u, p.id, '[System] Process stopped.', 'warn');
+    broadcastEvent(u, { event: 'status', projectId: p.id, running: false });
+  } catch (e) {
+    try { res.json({ success: false, message: e.message || 'Stop failed' }); } catch (err) {}
+  }
+});
+
+app.post('/api/projects/:id/kill', async (req, res) => {
+  try {
+    const u = getUser(req);
+    if (!u) return res.json({ success: false, message: 'Not logged in' });
+    const user = db.users.find((x) => x.username === u);
+    if (!user) return res.json({ success: false, message: 'User not found' });
+    const p = (user.projects || []).find((x) => String(x.id) === String(req.params.id));
+    if (!p) return res.json({ success: false, message: 'Project not found' });
+    res.json({ success: true, killing: true });
+    await stopProjectProcess(u, p, true);
+    broadcastLog(u, p.id, '[System] Process forcefully killed.', 'warn');
+    broadcastEvent(u, { event: 'status', projectId: p.id, running: false });
+  } catch (e) {
+    try { res.json({ success: false, message: e.message || 'Kill failed' }); } catch (err) {}
+  }
+});
+
+app.post('/api/projects/:id/command', (req, res) => {
+  try {
+    const u = getUser(req);
+    if (!u) return res.json({ success: false });
+    const user = db.users.find((x) => x.username === u);
+    if (!user) return res.json({ success: false });
+    const p = (user.projects || []).find((x) => String(x.id) === String(req.params.id));
+    if (!p) return res.json({ success: false });
+    const proc = procs[procKey(p.id)];
+    if (!proc || !proc.stdin || proc.stdin.destroyed) return res.json({ success: false, message: 'Process not running' });
+    const cmd = String((req.body && req.body.cmd) || '').trim();
+    if (!cmd) return res.json({ success: false, message: 'Empty command' });
+    proc.stdin.write(cmd + '\n');
+    res.json({ success: true });
+  } catch (e) {
+    res.json({ success: false, message: e.message || 'Failed' });
+  }
+});
+
+
 
 app.get('/api/admin/data', (req, res) => {
-  if (!requireAdmin(req, res)) return res.json({ users: [], inviteCodes: {}, adminApiKeys: [] });
-  const users = db.users.map(u => ({ username: u.username, admin: !!u.admin, premium: !!u.premium }));
-  res.json({ users, inviteCodes: db.inviteCodes || {}, adminApiKeys: db.adminApiKeys || [] });
+  const u = getUser(req);
+  if (!u) return res.json({ users: [], inviteCodes: {}, adminApiKeys: [] });
+  res.json({ users: db.users, inviteCodes: db.inviteCodes, adminApiKeys: db.adminApiKeys || [] });
 });
 
 app.post('/api/admin/revoke', (req, res) => {
-  if (!requireAdmin(req, res)) return res.json({ success: false });
   const { code } = req.body;
   if (db.inviteCodes[code] !== undefined) {
     delete db.inviteCodes[code];
@@ -1555,35 +1663,20 @@ app.post('/api/admin/revoke', (req, res) => {
 });
 
 app.post('/api/admin/set-admin', (req, res) => {
-  if (!requireAdmin(req, res)) return res.json({ success: false });
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
   const { username, isAdmin } = req.body;
   const target = db.users.find(x => x.username === username);
   if (target) {
-    const wasAdmin = !!target.admin;
     target.admin = !!isAdmin;
-    if (target.admin && !wasAdmin && !target.staffWelcomeSent) {
-      db.inboxMessages = db.inboxMessages || [];
-      const staffWelcome = {
-        id: Date.now(),
-        title: 'Staff Team',
-        body: 'Welcome ' + target.username + ' to the staff team!',
-        ts: Date.now(),
-        readBy: [],
-        sender: 'System',
-        rank: 'staff',
-        recipient: target.username
-      };
-      db.inboxMessages.unshift(staffWelcome);
-      broadcastInboxMessage(staffWelcome);
-      target.staffWelcomeSent = true;
-    }
     saveDB();
   }
   res.json({ success: true });
 });
 
 app.post('/api/admin/create-admin-key', (req, res) => {
-  if (!requireAdmin(req, res)) return res.json({ success: false });
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
   const { apiKey } = req.body;
   db.adminApiKeys = db.adminApiKeys || [];
   db.adminApiKeys.push({ key: apiKey, assignedUser: null, createdAt: Date.now() });
@@ -1592,7 +1685,8 @@ app.post('/api/admin/create-admin-key', (req, res) => {
 });
 
 app.post('/api/admin/assign-admin-key', (req, res) => {
-  if (!requireAdmin(req, res)) return res.json({ success: false });
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
   const { apiKey, username } = req.body;
   const keyObj = (db.adminApiKeys || []).find(k => k.key === apiKey);
   if (!keyObj) return res.json({ success: false });
@@ -1671,88 +1765,6 @@ app.get('/api/v1/apikeys', (req, res) => {
     masked: 'rc_******'
   }));
   res.json({ success: true, keys });
-});
-
-function detectDeviceFromUA(uaRaw, hints) {
-  const ua = (uaRaw || '').toLowerCase();
-  hints = hints || {};
-  let type = 'desktop';
-  let os = 'unknown';
-  let browser = 'unknown';
-  const touch = !!(hints.touch || (typeof hints.maxTouchPoints === 'number' && hints.maxTouchPoints > 0));
-  const mtp = typeof hints.maxTouchPoints === 'number' ? hints.maxTouchPoints : 0;
-  const w = typeof hints.screenWidth === 'number' ? hints.screenWidth : 0;
-  const h = typeof hints.screenHeight === 'number' ? hints.screenHeight : 0;
-  const vw = typeof hints.viewportWidth === 'number' ? hints.viewportWidth : 0;
-  const vh = typeof hints.viewportHeight === 'number' ? hints.viewportHeight : 0;
-  const minSide = w && h ? Math.min(w, h) : (w || h || 0);
-  const maxSide = w && h ? Math.max(w, h) : (w || h || 0);
-  const minViewport = vw && vh ? Math.min(vw, vh) : (vw || vh || 0);
-  const scores = { mobile: 0, tablet: 0, desktop: 0, tv: 0, console: 0, bot: 0 };
-
-  if (/bot|crawl|spider|slurp|bingpreview|headless|googlebot|bingbot|duckduckbot|baiduspider|yandexbot|facebookexternalhit|whatsapp|telegrambot|discordbot|slackbot/.test(ua)) scores.bot += 10;
-  if (/smart-tv|smarttv|googletv|appletv|hbbtv|netcast|viera|tizen.*tv|web0s|crkey|roku/.test(ua)) scores.tv += 8;
-  if (/xbox|playstation|nintendo/.test(ua)) scores.console += 8;
-  if (/ipad/.test(ua)) scores.tablet += 6;
-  if (/iphone|ipod/.test(ua)) scores.mobile += 6;
-  if (/android/.test(ua) && /mobile/.test(ua)) scores.mobile += 5;
-  if (/android/.test(ua) && !/mobile/.test(ua)) scores.tablet += 5;
-  if (/tablet|kindle|silk|playbook|nexus 7|nexus 9|nexus 10|sm-t/.test(ua)) scores.tablet += 5;
-  if (/mobi|windows phone|blackberry|opera mini|iemobile|fennec/.test(ua)) scores.mobile += 4;
-  if (/macintosh/.test(ua) && (touch || mtp > 1)) scores.tablet += 5;
-  if (/windows nt|x11|cros|linux/.test(ua) && !touch) scores.desktop += 3;
-
-  if (touch || mtp > 0) {
-    if (minSide > 0 && minSide < 600) scores.mobile += 3;
-    else if (minSide >= 600 && minSide < 1100) scores.tablet += 3;
-    else if (minSide >= 1100) scores.desktop += 1;
-  }
-  if (minViewport > 0 && minViewport < 480) scores.mobile += 2;
-  if (minViewport >= 700 && minViewport <= 1180 && touch) scores.tablet += 1;
-  if (maxSide >= 1920 && minSide >= 1080 && !touch) scores.desktop += 2;
-
-  let best = -1;
-  for (const k of Object.keys(scores)) {
-    if (scores[k] > best) { best = scores[k]; type = k; }
-  }
-  if (best <= 0) type = 'desktop';
-
-  if (type === 'mobile' && minSide >= 768 && maxSide >= 1024 && !/iphone|ipod|android.*mobile/.test(ua)) type = 'tablet';
-  if (type === 'tablet' && minSide > 0 && minSide < 520 && /iphone|ipod|android.*mobile/.test(ua)) type = 'mobile';
-  if (type === 'desktop' && touch && minSide > 0 && minSide < 640) type = 'mobile';
-  if (type === 'desktop' && touch && minSide >= 640 && minSide < 1180) type = 'tablet';
-
-  if (/windows nt/.test(ua)) os = 'windows';
-  else if (/mac os x|macintosh/.test(ua)) os = 'macos';
-  else if (/android/.test(ua)) os = 'android';
-  else if (/iphone|ipad|ipod/.test(ua)) os = 'ios';
-  else if (/cros/.test(ua)) os = 'chromeos';
-  else if (/linux/.test(ua)) os = 'linux';
-  if (os === 'macos' && (touch || mtp > 1) && type !== 'desktop') os = 'ios';
-
-  if (/edg\//.test(ua)) browser = 'edge';
-  else if (/samsungbrowser/.test(ua)) browser = 'samsung';
-  else if (/opr\/|opera/.test(ua)) browser = 'opera';
-  else if (/chrome\//.test(ua) || /crios/.test(ua)) browser = 'chrome';
-  else if (/fxios|firefox/.test(ua)) browser = 'firefox';
-  else if (/safari/.test(ua)) browser = 'safari';
-
-  return { type, os, browser };
-}
-
-app.get('/api/v1/device', (req, res) => {
-  const u = getUser(req);
-  if (!u) return res.status(401).json({ success: false, message: 'Unauthorized' });
-  const hints = {
-    touch: req.query.touch === '1',
-    maxTouchPoints: req.query.mtp ? parseInt(req.query.mtp, 10) : 0,
-    screenWidth: req.query.w ? parseInt(req.query.w, 10) : 0,
-    screenHeight: req.query.h ? parseInt(req.query.h, 10) : 0,
-    viewportWidth: req.query.vw ? parseInt(req.query.vw, 10) : 0,
-    viewportHeight: req.query.vh ? parseInt(req.query.vh, 10) : 0
-  };
-  const info = detectDeviceFromUA(req.headers['user-agent'] || '', hints);
-  res.json({ success: true, type: info.type, os: info.os, browser: info.browser });
 });
 
 app.post('/api/v1/deploy', (req, res) => {
@@ -2193,16 +2205,7 @@ app.post('/api/v1/feedback-reply', (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Error:', err);
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error',
-    users: [],
-    inviteCodes: {},
-    adminApiKeys: [],
-    messages: [],
-    projects: [],
-    shared: []
-  });
+  res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
 app.use((req, res) => {
@@ -2214,4 +2217,5 @@ server.listen(PORT, () => {
   console.log('Reboot Cord running on port ' + PORT);
   const isRender = !!process.env.RENDER;
   console.log('PrysmisAI model: ' + OLLAMA_VISION_MODEL + (isRender ? ' (Render deployment - set GEMINI_API_KEY for cloud AI or OLLAMA_BASE_URL for remote Ollama)' : ' (local default port 1000)'));
+  try { startMcDomainProxy(); } catch (e) { console.error('MC proxy start error', e.message); }
 });
