@@ -106,11 +106,24 @@ const state = {
   inboxUnread: false,
   showInboxNotification: false,
   shareInvites: [],
-  showShareInviteNotification: false
+  showShareInviteNotification: false,
+  auditLog: [],
+  consoleTab: "console",
+  showMcClientNotification: false
 };
 
 let ws;
 let searchTimeout = null;
+let cmEditor = null;
+let cmEditorFile = null;
+let cmEditorProject = null;
+
+function logAudit(kind, msg) {
+  state.auditLog = state.auditLog || [];
+  state.auditLog.unshift({ t: getTime(), kind: kind, msg: msg });
+  if (state.auditLog.length > 300) state.auditLog.length = 300;
+  scheduleRender();
+}
 
 function connectWS() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -307,12 +320,14 @@ function restartProject(p) {
   const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
   if (proj) proj.running = false;
   if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = false;
+  logAudit('restart', 'Forced restart requested for ' + (p.name || p.id));
   scheduleRender();
   fetch("/api/projects/" + p.id + "/restart", { method: "POST" }).then(function(r) { return r.json(); }).then(function() {
     p.running = true;
     const proj2 = state.projects.find(function(x){ return String(x.id) === String(p.id); });
     if (proj2) proj2.running = true;
     if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = true;
+    logAudit('restart', 'Process state forced to restart — ' + (p.name || p.id) + ' back online');
     scheduleRender();
   });
 }
@@ -484,6 +499,42 @@ function renderAIChatButton() {
     el("div", { className: "ai-chat-button-icon" }, svgIcon("ai"))
   );
   return btn;
+}
+
+function dismissMcClientNotification() {
+  state.showMcClientNotification = false;
+  try { localStorage.setItem('rc_mc_notice_seen', '1'); } catch (e) {}
+  scheduleRender();
+  checkInbox();
+  checkShareInvites();
+  fetchSharedProjects();
+}
+
+function renderMcClientNotification() {
+  if (!state.showMcClientNotification) return null;
+  const overlay = el("div", { className: "inbox-notification-overlay" },
+    el("div", { className: "inbox-notification-box mc-notification-box" },
+      el("div", { className: "mc-notification-scene" },
+        el("div", { className: "mc-notification-sky" }),
+        el("div", { className: "mc-notification-hill" })
+      ),
+      el("div", { className: "mc-notification-content" },
+        el("div", { className: "inbox-notification-header" },
+          el("div", { className: "inbox-notification-badge mc-notification-badge" }, "now here!"),
+          el("button", { className: "inbox-notification-close", onClick: dismissMcClientNotification }, "×")
+        ),
+        el("div", { className: "mc-notification-title" }, "Now Here!"),
+        el("div", { className: "mc-notification-text" },
+          "Reboot Cord minecraft client has arrived. ",
+          el("a", { href: "/minecraft-client", onClick: (e) => { e.preventDefault(); dismissMcClientNotification(); window.location.href = "/minecraft-client"; } }, "Click here"),
+          " for more information of the client."
+        ),
+        el("div", { className: "mc-notification-code" }, "curl -fsSL http://rebootcord.world/install.sh | bash"),
+        el("button", { className: "inbox-notification-btn mc-notification-btn", onClick: dismissMcClientNotification }, "okay")
+      )
+    )
+  );
+  return overlay;
 }
 
 function renderInboxNotification() {
@@ -1122,6 +1173,7 @@ function saveCurrentFile() {
   state.currentProject.files = state.currentProject.files || {};
   state.currentProject.files[state.editorFile] = state.codeContent;
   state.originalCodeContent = state.codeContent;
+  logAudit('save', 'Saved ' + state.editorFile + ' (' + state.codeContent.length + ' chars)');
   const access = state.projectAccess;
   if (access && !access.isOwner) {
     fetch('/api/projects/' + state.currentProject.id + '/savefile', {
@@ -1274,6 +1326,9 @@ function render() {
   }
   if (state.showAIChat) {
     document.body.appendChild(renderAIChatUI());
+  }
+  if (state.showMcClientNotification) {
+    document.body.appendChild(renderMcClientNotification());
   }
   if (state.showInboxNotification) {
     document.body.appendChild(renderInboxNotification());
@@ -1621,6 +1676,7 @@ function toggleRunning(p) {
   const proj = state.projects.find(function(x){ return String(x.id) === String(p.id); });
   if (proj) proj.running = nextRunning;
   if (state.currentProject && String(state.currentProject.id) === String(p.id)) state.currentProject.running = nextRunning;
+  logAudit(nextRunning ? 'start' : 'stop', (nextRunning ? 'Process started — ' : 'Process stopped — ') + (p.name || p.id));
   scheduleRender();
 
   if (nextRunning) {
@@ -1663,6 +1719,7 @@ function installPkg() {
   const v = input ? input.value.trim() : "";
   if (!v || !ws || !state.currentProject || state.installingPkg) return;
   state.installingPkg = true;
+  logAudit('install', 'Installing dependency: ' + v);
   ws.send(JSON.stringify({ event: 'install', projectId: state.currentProject.id, pkg: v }));
   if (input) input.value = "";
   scheduleRender();
@@ -1677,6 +1734,7 @@ function installAllPkgs(force) {
   const localCode = Object.values((p.files && typeof p.files === "object") ? p.files : {}).join("\n");
   const localPkgs = detectDependencies(localCode, p.lang || "Python");
   const sendInstall = (merged) => {
+    logAudit('install', 'Installing all dependencies (' + merged.length + ')' + (force ? ' — forced reinstall' : ''));
     ws.send(JSON.stringify({ event: 'installAll', projectId: p.id, pkgs: merged, force: !!force }));
     state.missingPackages = [];
   };
@@ -1863,37 +1921,7 @@ function renderBotDashboard() {
     state.justSaved = false;
   }
 
-  const ta = el("textarea", { className: "code-editor", spellcheck: "false", wrap: "off" });
-  ta.value = state.codeContent || "";
-  
-  const hl = el("div", { className: "highlight-layer" });
-  
-  const lineNums = el("div", { className: "line-numbers" });
-  
-  let editTimeout;
-  const updateEditor = () => {
-    const count = (state.codeContent.match(/\n/g) || []).length + 1;
-    const arr = [];
-    for(let i=1; i<=count; i++) arr.push(i);
-    lineNums.innerText = arr.join('\n');
-    hl.innerHTML = highlightCode(state.codeContent, p.type);
-  };
-  
-  updateEditor();
-
-  ta.onscroll = () => { 
-    lineNums.scrollTop = ta.scrollTop; 
-    hl.scrollTop = ta.scrollTop;
-    hl.scrollLeft = ta.scrollLeft;
-  };
-  
-  ta.oninput = () => { 
-    state.codeContent = ta.value; 
-    clearTimeout(editTimeout);
-    editTimeout = setTimeout(updateEditor, 50);
-  };
-
-  const editorWrapper = el("div", { className: "editor-wrapper" }, lineNums, el("div", { className: "code-container" }, hl, ta));
+  const editorWrapper = buildCodeMirrorEditor(p);
 
   frag.appendChild(el("div", { className: "dashboard discord-dash" },
     el("div", { className: "sidebar discord-sidebar" },
@@ -1918,7 +1946,11 @@ function renderBotDashboard() {
     ),
     el("div", { className: "main-area" },
       el("div", { className: "editor-toolbar discord-toolbar" },
-        el("span", { className: "editor-filename" }, state.editorFile || mainFile),
+        el("div", { className: "editor-filename-wrap" },
+          svgIcon("doc"),
+          el("span", { className: "editor-filename" }, state.editorFile || mainFile),
+          el("span", { className: "editor-lang-badge" }, cmModeLabel(state.editorFile || mainFile, p.type))
+        ),
         el("div", { style: { display: "flex", flexWrap: "wrap", gap: "8px" } }, revertCodeBtn, clearCodeBtn, saveFileBtn)
       ),
       editorWrapper,
@@ -1933,7 +1965,8 @@ function buildConsole() {
   const tab = state.consoleTab || 'console';
   const tabs = el("div", { className: "console-tabs" },
     el("button", { className: "console-tab-btn" + (tab === 'console' ? ' active' : ''), onClick: () => { state.consoleTab = 'console'; scheduleRender(); } }, "Console"),
-    el("button", { className: "console-tab-btn" + (tab === 'terminal' ? ' active' : ''), onClick: () => { state.consoleTab = 'terminal'; scheduleRender(); } }, "Terminal")
+    el("button", { className: "console-tab-btn" + (tab === 'terminal' ? ' active' : ''), onClick: () => { state.consoleTab = 'terminal'; scheduleRender(); } }, "Terminal"),
+    el("button", { className: "console-tab-btn" + (tab === 'audit' ? ' active' : ''), onClick: () => { state.consoleTab = 'audit'; scheduleRender(); } }, svgIcon("list"), " Audit Log")
   );
 
   if (tab === 'terminal') {
@@ -1945,6 +1978,18 @@ function buildConsole() {
         )
       ),
       buildTerminalBody()
+    );
+  }
+
+  if (tab === 'audit') {
+    return el("div", { className: "console-panel discord-console" },
+      el("div", { className: "console-toolbar discord-console-toolbar" },
+        tabs,
+        el("div", { className: "console-controls" },
+          el("button", { className: "btn-clear", onClick: () => { state.auditLog = []; scheduleRender(); } }, "Clear")
+        )
+      ),
+      buildAuditLogBody()
     );
   }
 
@@ -1968,6 +2013,128 @@ function buildConsole() {
     ),
     body
   );
+}
+
+const AUDIT_KIND_META = {
+  save:    { label: "SAVE",    color: "#5865f2" },
+  install: { label: "INSTALL", color: "#e0a640" },
+  restart: { label: "RESTART", color: "#7aa8ff" },
+  start:   { label: "START",   color: "#2ec27e" },
+  stop:    { label: "STOP",    color: "#ff6b6b" }
+};
+
+function buildAuditLogBody() {
+  const list = state.auditLog || [];
+  const body = el("div", { className: "console-body audit-log-body" });
+  if (!list.length) {
+    body.appendChild(el("div", { style: { color: "var(--text-muted)", fontSize: "12px", padding: "12px" } }, "Critical changes to this project will be tracked here — saves, dependency installs, and restarts."));
+    return body;
+  }
+  list.forEach(entry => {
+    const meta = AUDIT_KIND_META[entry.kind] || { label: entry.kind.toUpperCase(), color: "#9aa0a6" };
+    body.appendChild(el("div", { className: "audit-log-line" },
+      el("span", { className: "audit-log-time" }, entry.t),
+      el("span", { className: "audit-log-badge", style: { color: meta.color, borderColor: meta.color + "55", background: meta.color + "14" } }, meta.label),
+      el("span", { className: "audit-log-msg" }, entry.msg)
+    ));
+  });
+  return body;
+}
+
+function cmModeForFile(filename, projectType) {
+  const name = (filename || "").toLowerCase();
+  if (name.endsWith(".py")) return "python";
+  if (name.endsWith(".json")) return { name: "javascript", json: true };
+  if (name.endsWith(".ts") || name.endsWith(".tsx")) return "text/typescript";
+  if (name.endsWith(".jsx")) return "text/jsx";
+  if (name.endsWith(".js") || name.endsWith(".mjs") || name.endsWith(".cjs")) return "javascript";
+  if (name.endsWith(".java")) return "text/x-java";
+  if (name.endsWith(".go")) return "text/x-go";
+  if (name.endsWith(".rs")) return "text/x-rustsrc";
+  if (name.endsWith(".rb")) return "text/x-ruby";
+  if (name.endsWith(".cs")) return "text/x-csharp";
+  if (name.endsWith(".php")) return "application/x-httpd-php";
+  if (name.endsWith(".kt")) return "text/x-kotlin";
+  if (name.endsWith(".lua")) return "text/x-lua";
+  if (name.endsWith(".html")) return "htmlmixed";
+  if (name.endsWith(".css")) return "css";
+  if (name.endsWith(".md")) return "markdown";
+  if (name.endsWith(".yml") || name.endsWith(".yaml")) return "yaml";
+  if (name.endsWith(".sh")) return "shell";
+  if (projectType === "minecraft") return "text/x-java";
+  return "python";
+}
+
+function cmModeLabel(filename, projectType) {
+  const mode = cmModeForFile(filename, projectType);
+  const key = typeof mode === "string" ? mode : (mode.json ? "json" : mode.name);
+  const labels = {
+    "python": "Python", "javascript": "JavaScript", "json": "JSON",
+    "text/typescript": "TypeScript", "text/jsx": "JSX",
+    "text/x-java": "Java", "text/x-go": "Go", "text/x-rustsrc": "Rust",
+    "text/x-ruby": "Ruby", "text/x-csharp": "C#", "application/x-httpd-php": "PHP",
+    "text/x-kotlin": "Kotlin", "text/x-lua": "Lua", "htmlmixed": "HTML",
+    "css": "CSS", "markdown": "Markdown", "yaml": "YAML", "shell": "Shell"
+  };
+  return labels[key] || "Plain Text";
+}
+
+function buildCodeMirrorEditor(p) {
+  const wrapper = el("div", { className: "editor-wrapper cm-wrapper" });
+  const mode = cmModeForFile(state.editorFile, p.type);
+  const value = state.codeContent || "";
+
+  if (typeof CodeMirror === "undefined") {
+    const fallback = el("textarea", { className: "code-editor cm-fallback", spellcheck: "false" });
+    fallback.value = value;
+    fallback.oninput = () => { state.codeContent = fallback.value; };
+    wrapper.appendChild(fallback);
+    return wrapper;
+  }
+
+  if (!cmEditor) {
+    cmEditor = CodeMirror(wrapper, {
+      value: value,
+      mode: mode,
+      theme: "rebootcord",
+      lineNumbers: true,
+      indentUnit: 4,
+      tabSize: 4,
+      indentWithTabs: false,
+      lineWrapping: false,
+      matchBrackets: true,
+      autoCloseBrackets: true,
+      styleActiveLine: true,
+      viewportMargin: Infinity,
+      extraKeys: {
+        "Ctrl-Space": "autocomplete",
+        "Cmd-Space": "autocomplete",
+        "Ctrl-S": (cm) => { saveCurrentFile(); state.justSaved = true; scheduleRender(); },
+        "Cmd-S": (cm) => { saveCurrentFile(); state.justSaved = true; scheduleRender(); }
+      },
+      hintOptions: { hint: CodeMirror.hint.anyword, alignWithWord: true, completeSingle: false }
+    });
+    cmEditor.on("change", (cm) => {
+      state.codeContent = cm.getValue();
+    });
+    cmEditor.on("inputRead", (cm, change) => {
+      if (change.origin && change.origin.indexOf("+input") === 0 && change.text[0] && /[\w.]/.test(change.text[0])) {
+        cm.showHint({ completeSingle: false });
+      }
+    });
+  } else {
+    wrapper.appendChild(cmEditor.getWrapperElement());
+    if (cmEditor.getValue() !== value) {
+      const cursor = cmEditor.getCursor();
+      cmEditor.setValue(value);
+      if (cmEditorFile === state.editorFile) cmEditor.setCursor(cursor);
+    }
+    cmEditor.setOption("mode", mode);
+  }
+  cmEditorFile = state.editorFile;
+  cmEditorProject = p.id;
+  setTimeout(() => { if (cmEditor) cmEditor.refresh(); }, 0);
+  return wrapper;
 }
 
 function buildTerminalBody() {
@@ -3174,9 +3341,16 @@ fetch("/api/me").then(r => r.json()).then(d => {
   }
   fetch("/api/projects").then(r => r.json()).then(pd => {
     if (pd && pd.projects) state.projects = pd.projects;
-    checkInbox();
-    checkShareInvites();
-    fetchSharedProjects();
+    let mcNoticeSeen = false;
+    try { mcNoticeSeen = localStorage.getItem('rc_mc_notice_seen') === '1'; } catch (e) {}
+    if (!mcNoticeSeen) {
+      state.showMcClientNotification = true;
+      scheduleRender();
+    } else {
+      checkInbox();
+      checkShareInvites();
+      fetchSharedProjects();
+    }
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         fetchSharedProjects();
