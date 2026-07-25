@@ -66,6 +66,7 @@ const state = {
   newChangelogTitle: "",
   newChangelogBody: "",
   generateChangelogLink: false,
+  newChangelogDate: "",
   apiKeys: [],
   recentKey: null,
   recentKeyHidden: false,
@@ -1752,17 +1753,23 @@ function toggleLike(id) {
 function postChangelog() {
   const title = (state.newChangelogTitle || "").trim();
   const body = (state.newChangelogBody || "").trim();
+  const customDate = state.newChangelogDate;
   if (!title || !body) return;
+  let timestamp = Date.now();
+  if (customDate) {
+    timestamp = new Date(customDate).getTime();
+  }
   fetch("/api/changelogs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: title, body: body, generateLink: !!state.generateChangelogLink })
+    body: JSON.stringify({ title: title, body: body, generateLink: !!state.generateChangelogLink, ts: timestamp })
   }).then(r => r.json()).then(d => {
     if (d.success) {
       state.showChangelogModal = false;
       state.newChangelogTitle = "";
       state.newChangelogBody = "";
       state.generateChangelogLink = false;
+      state.newChangelogDate = "";
       fetchChangelogs();
     }
   });
@@ -2657,7 +2664,7 @@ function renderChangelogsPage() {
   );
   if (state.isAdmin) {
     header.appendChild(el("div", { style: { display: "flex", gap: "10px", alignItems: "center" } },
-      el("button", { className: "btn-new", style: { background: "var(--green)", color: "#000" }, onClick: () => { state.showChangelogModal = true; state.newChangelogTitle = ""; state.newChangelogBody = ""; scheduleRender(); } }, "+ Post Changelog"),
+      el("button", { className: "btn-new", style: { background: "var(--green)", color: "#000" }, onClick: () => { state.showChangelogModal = true; state.newChangelogTitle = ""; state.newChangelogBody = ""; state.newChangelogDate = ""; scheduleRender(); } }, "+ Post Changelog"),
       el("button", { className: "go-back-btn", onClick: () => { history.pushState(null, "", "/dashboard"); state.viewChangelogSlug = null; state.page = "projects"; scheduleRender(); } }, "Go Back")
     ));
   } else {
@@ -3280,6 +3287,10 @@ function renderChangelogModal() {
     el("div", { className: "form-group", style: { display: "flex", alignItems: "center", gap: "8px" } },
       (() => { const cb = el("input", { type: "checkbox", id: "genlink" }); cb.checked = !!state.generateChangelogLink; cb.onchange = (e) => { state.generateChangelogLink = e.target.checked; }; return cb; })(),
       el("label", { for: "genlink", style: { fontSize: "12px", color: "#aaa", cursor: "pointer" } }, "generate changelog link")
+    ),
+    el("div", { className: "form-group" },
+      el("label", { className: "form-label" }, "Set custom date/time (optional):"),
+      el("input", { type: "datetime-local", className: "form-input", value: state.newChangelogDate, oninput: (e) => { state.newChangelogDate = e.target.value; } })
     ),
     el("div", { className: "modal-actions" },
       el("button", { className: "btn-cancel", onClick: () => { state.showChangelogModal = false; scheduleRender(); } }, "Cancel"),
