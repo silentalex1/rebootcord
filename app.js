@@ -409,6 +409,12 @@ function collectFiles(tree, out) {
   return out;
 }
 
+function toDatetimeLocalValue(ts) {
+  const d = new Date(ts);
+  const pad = function(n) { return String(n).padStart(2, '0'); };
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
   if (attrs) {
@@ -2712,6 +2718,35 @@ function renderChangelogsPage() {
       heartWrap.appendChild(tip);
       card.appendChild(heartWrap);
       if (state.isAdmin) {
+        const metaEl = card.querySelector(".ch-meta");
+        const dateRow = el("div", { className: "ch-date-edit", onClick: (ev) => ev.stopPropagation() },
+          el("label", { className: "ch-date-edit-label" }, "Date that was posted:")
+        );
+        const dateInput = el("input", { className: "ch-date-edit-input" });
+        dateInput.type = "datetime-local";
+        dateInput.value = toDatetimeLocalValue(ch.ts);
+        const dateSetBtn = el("button", { className: "ch-date-edit-btn" }, "Set");
+        dateSetBtn.onclick = (ev) => {
+          ev.stopPropagation();
+          if (!dateInput.value) return;
+          const newTs = new Date(dateInput.value).getTime();
+          if (isNaN(newTs)) return;
+          fetch("/api/changelogs/" + ch.id + "/setdate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ts: newTs })
+          }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res.success) {
+              ch.ts = res.ts;
+              metaEl.lastChild.textContent = " • " + new Date(ch.ts).toLocaleString();
+              dateSetBtn.textContent = "Set!";
+              setTimeout(function() { dateSetBtn.textContent = "Set"; }, 1200);
+            }
+          });
+        };
+        dateRow.appendChild(dateInput);
+        dateRow.appendChild(dateSetBtn);
+        card.appendChild(dateRow);
         card.addEventListener("contextmenu", function(ev) {
           ev.preventDefault();
           document.querySelectorAll(".ctx-menu").forEach(function(m) { m.remove(); });
