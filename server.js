@@ -12,7 +12,6 @@ const util = require('util');
 const helmet = require('helmet');
 const expressRateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
-const MinecraftManager = require('./minecraft-manager');
 
 const execAsync = util.promisify(cp.exec);
 
@@ -161,7 +160,6 @@ setInterval(() => { if (saveDBPending) saveDBNow(); }, 10000);
 process.on('exit', () => { if (saveDBPending) saveDBNow(); });
 
 let db = loadDB();
-const minecraftManager = new MinecraftManager();
 const procs = {};
 const wsClients = new Set();
 const rateLimit = {};
@@ -2303,35 +2301,7 @@ app.post('/api/v1/feedback-reply', (req, res) => {
 });
 
 app.post('/api/minecraft/create', async (req, res) => {
-  const { version, ip, serverType } = req.body || {};
-  
-  if (!version || !ip || !serverType) {
-    return res.json({ success: false, message: 'Missing required fields' });
-  }
-  
-  if (!version.match(/^1\.\d+(\.\d+)?$/)) {
-    return res.json({ success: false, message: 'Invalid Minecraft version format' });
-  }
-  
-  try {
-    const serverConfig = minecraftManager.createServer({ version, ip, serverType });
-    const startResult = await minecraftManager.startServer(serverConfig.id);
-    
-    if (startResult.success) {
-      res.json({ 
-        success: true, 
-        serverId: serverConfig.id,
-        ip: ip,
-        port: serverConfig.port,
-        status: serverConfig.status 
-      });
-    } else {
-      res.json({ success: false, message: startResult.message });
-    }
-  } catch (error) {
-    console.error('Minecraft server creation error:', error);
-    res.json({ success: false, message: 'Failed to create server' });
-  }
+  res.json({ success: false, message: 'Minecraft hosting requires minecraft-manager.js module' });
 });
 
 app.get('/api/minecraft/status/:serverId', (req, res) => {
