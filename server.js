@@ -12,38 +12,11 @@ const util = require('util');
 const helmet = require('helmet');
 const expressRateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
+const MinecraftManager = require('./minecraft-manager');
 
 const execAsync = util.promisify(cp.exec);
 
-const INSTALL_SCRIPT = `#!/usr/bin/env bash
-set -e
-RC_HOME="$HOME/.rebootcord-minecraft-client"
-echo ""
-echo "Reboot Cord Minecraft Client Installer"
-echo "---------------------------------------"
-echo "Installing all dependencies of reboot cord minecraft client.."
-sleep 1
-mkdir -p "$RC_HOME/mods"
-mkdir -p "$RC_HOME/config"
-mkdir -p "$RC_HOME/logs"
-echo "Creating client directories at $RC_HOME"
-sleep 1
-cat > "$RC_HOME/config/client.json" <<'EOF'
-{
-  "client": "rebootcord-minecraft-client",
-  "status": "coming-soon",
-  "source": "https://rebootcord.world/minecraft-client"
-}
-EOF
-echo "Writing client configuration.."
-sleep 1
-echo ""
-echo "The Reboot Cord Minecraft Client is not fully released yet."
-echo "Your local client folder has been prepared at: $RC_HOME"
-echo "Visit https://rebootcord.world/minecraft-client for updates."
-echo "---------------------------------------"
-echo "Setup complete."
-`;
+
 
 
 process.on('uncaughtException', (err) => {
@@ -188,26 +161,7 @@ setInterval(() => { if (saveDBPending) saveDBNow(); }, 10000);
 process.on('exit', () => { if (saveDBPending) saveDBNow(); });
 
 let db = loadDB();
-if (!db.mcClientAnnounced) {
-  db.inboxMessages = db.inboxMessages || [];
-  (db.users || []).forEach(function(u) {
-    db.inboxMessages.unshift({
-      id: Date.now() + Math.floor(Math.random() * 100000),
-      title: 'Introducing Reboot cord Client!',
-      body: 'Reboot cord client is the next step of minecraft server hosting. Get ready to experience the best minecraft server hosting ever. Check out the info for more information of the client.',
-      linkText: 'info',
-      linkUrl: '/minecraft-client',
-      ts: Date.now(),
-      readBy: [],
-      sender: 'Reboot Cord',
-      rank: 'notice',
-      variant: 'release',
-      recipient: u.username
-    });
-  });
-  db.mcClientAnnounced = true;
-  saveDBNow();
-}
+const minecraftManager = new MinecraftManager();
 const procs = {};
 const wsClients = new Set();
 const rateLimit = {};
@@ -618,7 +572,7 @@ app.post('/register', async (req, res) => {
   db.inboxMessages.unshift({
     id: Date.now(),
     title: 'Welcome to reboot world!',
-    body: 'this is a website where you can host your discord bots, and soon own minecraft world. Please follow ALL of the rules from the discord server.',
+    body: 'this is a website where you can host your discord bots. Please follow ALL of the rules from the discord server.',
     linkText: 'discord server.',
     linkUrl: 'https://discord.gg/rNKcnJV72c',
     ts: Date.now(),
@@ -928,7 +882,7 @@ app.get('/api/inbox', (req, res) => {
     db.inboxMessages.unshift({
       id: Date.now() + Math.floor(Math.random() * 100000),
       title: 'Welcome to reboot world!',
-      body: 'this is a website where you can host your discord bots, and soon own minecraft world. Please follow ALL of the rules from the discord server.',
+      body: 'this is a website where you can host your discord bots. Please follow ALL of the rules from the discord server.',
       linkText: 'discord server.',
       linkUrl: 'https://discord.gg/rNKcnJV72c',
       ts: Date.now(),
@@ -943,9 +897,9 @@ app.get('/api/inbox', (req, res) => {
     db.inboxMessages.unshift({
       id: Date.now() + Math.floor(Math.random() * 100000) + 1,
       title: 'Introducing Reboot cord Client!',
-      body: 'Reboot cord client is the next step of minecraft server hosting. Get ready to experience the best minecraft server hosting ever. Check out the info for more information of the client.',
-      linkText: 'info',
-      linkUrl: '/minecraft-client',
+      body: 'Reboot cord hosting platform is ready. Check out the dashboard to create your projects.',
+      linkText: 'dashboard',
+      linkUrl: '/dashboard',
       ts: Date.now(),
       readBy: [],
       sender: 'Reboot Cord',
@@ -1012,13 +966,11 @@ app.post('/api/inbox/discord', (req, res) => {
   res.json({ success: true });
 });
 
-app.get('/minecraft-client', (req, res) => {
-  res.sendFile(path.join(__dirname, 'minecraft-info', 'client.html'));
-});
+
 
 app.get('/install.sh', (req, res) => {
   res.set('Content-Type', 'text/x-sh');
-  res.send(INSTALL_SCRIPT);
+  res.sendFile(path.join(__dirname, 'install.sh'));
 });
 
 app.get('/inbox', (req, res) => {
@@ -2348,6 +2300,55 @@ app.post('/api/v1/feedback-reply', (req, res) => {
     saveDB();
   }
   res.json({ success: true });
+});
+
+app.post('/api/minecraft/create', async (req, res) => {
+  const { version, ip, serverType } = req.body || {};
+  
+  if (!version || !ip || !serverType) {
+    return res.json({ success: false, message: 'Missing required fields' });
+  }
+  
+  if (!version.match(/^1\.\d+(\.\d+)?$/)) {
+    return res.json({ success: false, message: 'Invalid Minecraft version format' });
+  }
+  
+  try {
+    const serverConfig = minecraftManager.createServer({ version, ip, serverType });
+    const startResult = await minecraftManager.startServer(serverConfig.id);
+    
+    if (startResult.success) {
+      res.json({ 
+        success: true, 
+        serverId: serverConfig.id,
+        ip: ip,
+        port: serverConfig.port,
+        status: serverConfig.status 
+      });
+    } else {
+      res.json({ success: false, message: startResult.message });
+    }
+  } catch (error) {
+    console.error('Minecraft server creation error:', error);
+    res.json({ success: false, message: 'Failed to create server' });
+  }
+});
+
+app.get('/api/minecraft/status/:serverId', (req, res) => {
+  const { serverId } = req.params;
+  const serverDir = path.join(PROJECTS_DIR, 'minecraft', serverId);
+  const configPath = path.join(serverDir, 'server-config.json');
+  
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      res.json({ success: true, status: config.status, config: config });
+    } catch (error) {
+      res.json({ success: false, message: 'Failed to read server config' });
+    }
+  } else {
+    res.json({ success: false, message: 'Server not found' });
+  }
 });
 
 app.use((err, req, res, next) => {
