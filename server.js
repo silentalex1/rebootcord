@@ -954,18 +954,6 @@ app.get('/api/inbox', (req, res) => {
   res.json({ success: true, messages: msgs });
 });
 
-app.post('/api/inbox/setdate', (req, res) => {
-  const user = requireAdmin(req, res);
-  if (!user) return res.json({ success: false });
-  const m = (db.inboxMessages || []).find(x => String(x.id) === String(req.body.id));
-  if (!m) return res.json({ success: false, message: 'Message not found' });
-  const ts = Number(req.body.ts);
-  if (!ts || isNaN(ts)) return res.json({ success: false, message: 'Invalid date' });
-  m.ts = ts;
-  saveDB();
-  res.json({ success: true, ts: m.ts });
-});
-
 app.post('/api/inbox/delete', (req, res) => {
   const user = requireAdmin(req, res);
   if (!user) return res.json({ success: false });
@@ -1796,6 +1784,21 @@ app.post('/api/changelogs', (req, res) => {
   db.changelogs.unshift(ch);
   saveDB();
   res.json({ success: true });
+});
+
+app.post('/api/changelogs/:id/setdate', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false });
+  const user = db.users.find(x => x.username === u);
+  if (!user || !user.admin) return res.json({ success: false });
+  db.changelogs = db.changelogs || [];
+  const ch = db.changelogs.find(c => String(c.id) === req.params.id);
+  if (!ch) return res.json({ success: false, message: 'Changelog not found' });
+  const ts = Number(req.body.ts);
+  if (!ts || isNaN(ts)) return res.json({ success: false, message: 'Invalid date' });
+  ch.ts = ts;
+  saveDB();
+  res.json({ success: true, ts: ch.ts });
 });
 
 app.post('/api/changelogs/:id/like', (req, res) => {
