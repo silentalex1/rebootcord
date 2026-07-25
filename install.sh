@@ -164,20 +164,11 @@ main() {
     echo ""
     
     show_centered "Installation complete!" "$GREEN"
-    show_centered "Launching client..." "$YELLOW"
+    show_centered "Next steps:" "$YELLOW"
+    show_centered "1. Download mod from: https://rebootcord.world/downloads/rebootcord-mod.jar" "$GRAY"
+    show_centered "2. Place in: ~/.rebootcord/minecraft/mods/" "$GRAY"
+    show_centered "3. Launch Minecraft with Fabric profile" "$GRAY"
     echo ""
-    
-    sleep 2
-    
-    local install_dir="$HOME/.rebootcord"
-    if [ -f "$install_dir/install_path.txt" ]; then
-        local mc_path=$(cat "$install_dir/install_path.txt")
-        cd "$mc_path"
-        java -jar "$mc_path/fabric-loader-1.20.4-0.15.11.jar" &
-    else
-        show_centered "Error: Installation path not found" "$RED"
-        exit 1
-    fi
 }
 
 main
