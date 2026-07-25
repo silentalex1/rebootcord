@@ -971,6 +971,10 @@ app.get('/install.sh', (req, res) => {
   res.sendFile(path.join(__dirname, 'install.sh'));
 });
 
+app.get('/minecraft-client', (req, res) => {
+  res.sendFile(path.join(__dirname, 'minecraft-info', 'client.html'));
+});
+
 app.get('/inbox', (req, res) => {
   res.sendFile(path.join(__dirname, 'inbox-system', 'inbox.html'));
 });
