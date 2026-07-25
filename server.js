@@ -923,10 +923,25 @@ app.get('/api/inbox', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false, messages: [] });
   db.inboxMessages = db.inboxMessages || [];
+  const hasWelcomeMsg = db.inboxMessages.some(m => m.title === 'Welcome to reboot world!' && (!m.recipient || m.recipient === u));
+  if (!hasWelcomeMsg) {
+    db.inboxMessages.unshift({
+      id: Date.now() + Math.floor(Math.random() * 100000),
+      title: 'Welcome to reboot world!',
+      body: 'this is a website where you can host your discord bots, and soon own minecraft world. Please follow ALL of the rules from the discord server.',
+      linkText: 'discord server.',
+      linkUrl: 'https://discord.gg/rNKcnJV72c',
+      ts: Date.now(),
+      readBy: [],
+      sender: 'Reboot Cord',
+      rank: 'notice',
+      recipient: u
+    });
+  }
   const hasReleaseMsg = db.inboxMessages.some(m => m.variant === 'release' && (!m.recipient || m.recipient === u));
   if (!hasReleaseMsg) {
     db.inboxMessages.unshift({
-      id: Date.now() + Math.floor(Math.random() * 100000),
+      id: Date.now() + Math.floor(Math.random() * 100000) + 1,
       title: 'Introducing Reboot cord Client!',
       body: 'Reboot cord client is the next step of minecraft server hosting. Get ready to experience the best minecraft server hosting ever. Check out the info for more information of the client.',
       linkText: 'info',
@@ -938,8 +953,8 @@ app.get('/api/inbox', (req, res) => {
       variant: 'release',
       recipient: u
     });
-    saveDB();
   }
+  if (!hasWelcomeMsg || !hasReleaseMsg) saveDB();
   const msgs = (db.inboxMessages || [])
     .filter(m => !m.recipient || m.recipient === u)
     .map(m => ({
