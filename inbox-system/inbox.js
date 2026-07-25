@@ -11,12 +11,6 @@ function initials(name) {
   return name.trim().slice(0, 2).toUpperCase();
 }
 
-function toDatetimeLocalValue(ts) {
-  const d = new Date(ts);
-  const pad = (n) => String(n).padStart(2, '0');
-  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-}
-
 function loadInbox() {
   Promise.all([
     fetch('/api/inbox').then(r => r.json()),
@@ -132,46 +126,6 @@ function loadInbox() {
           });
         };
         item.appendChild(delBtn);
-
-        const dateRow = document.createElement('div');
-        dateRow.className = 'inbox-date-edit';
-        dateRow.onclick = (ev) => ev.stopPropagation();
-
-        const dateLabel = document.createElement('label');
-        dateLabel.textContent = 'Date that was posted:';
-        dateLabel.className = 'inbox-date-edit-label';
-
-        const dateInput = document.createElement('input');
-        dateInput.type = 'datetime-local';
-        dateInput.className = 'inbox-date-edit-input';
-        dateInput.value = toDatetimeLocalValue(m.ts);
-
-        const dateSetBtn = document.createElement('button');
-        dateSetBtn.className = 'inbox-date-edit-btn';
-        dateSetBtn.textContent = 'Set';
-        dateSetBtn.onclick = (ev) => {
-          ev.stopPropagation();
-          if (!dateInput.value) return;
-          const newTs = new Date(dateInput.value).getTime();
-          if (isNaN(newTs)) return;
-          fetch('/api/inbox/setdate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: m.id, ts: newTs })
-          }).then(r => r.json()).then(res => {
-            if (res.success) {
-              m.ts = res.ts;
-              date.textContent = formatDate(m.ts);
-              dateSetBtn.textContent = 'Set!';
-              setTimeout(() => { dateSetBtn.textContent = 'Set'; }, 1200);
-            }
-          });
-        };
-
-        dateRow.appendChild(dateLabel);
-        dateRow.appendChild(dateInput);
-        dateRow.appendChild(dateSetBtn);
-        main.appendChild(dateRow);
       }
 
       item.onclick = () => {
