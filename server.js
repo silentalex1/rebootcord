@@ -971,6 +971,27 @@ app.get('/install.sh', (req, res) => {
   res.sendFile(path.join(__dirname, 'install.sh'));
 });
 
+app.get('/install.ps1', (req, res) => {
+  res.set('Content-Type', 'text/plain');
+  res.sendFile(path.join(__dirname, 'install.ps1'));
+});
+
+app.get('/install.bat', (req, res) => {
+  res.set('Content-Type', 'text/plain');
+  res.sendFile(path.join(__dirname, 'install.bat'));
+});
+
+app.get('/install', (req, res) => {
+  const userAgent = req.headers['user-agent'] || '';
+  const isWindows = userAgent.includes('Windows');
+  
+  if (isWindows) {
+    res.redirect('/install.bat');
+  } else {
+    res.redirect('/install.sh');
+  }
+});
+
 app.get('/minecraft-client', (req, res) => {
   res.sendFile(path.join(__dirname, 'minecraft-info', 'client.html'));
 });
@@ -1745,11 +1766,12 @@ app.post('/api/changelogs', (req, res) => {
   if (!u) return res.json({ success: false, message: 'Login required' });
   const user = db.users.find(x => x.username === u);
   if (!user || !user.admin) return res.json({ success: false, message: 'Admin only' });
-  const { title, body, generateLink } = req.body;
+  const { title, body, generateLink, ts } = req.body;
   if (!title || !body) return res.json({ success: false });
   db.changelogs = db.changelogs || [];
   const slug = title.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  const ch = { id: Date.now(), title: title.trim(), body: body.trim(), author: u, ts: Date.now(), likes: [], hasLink: !!generateLink, slug: slug };
+  const timestamp = ts && !isNaN(ts) ? Number(ts) : Date.now();
+  const ch = { id: Date.now(), title: title.trim(), body: body.trim(), author: u, ts: timestamp, likes: [], hasLink: !!generateLink, slug: slug };
   db.changelogs.unshift(ch);
   saveDB();
   res.json({ success: true });
