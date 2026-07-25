@@ -531,8 +531,8 @@ function renderMcClientNotification() {
         ),
         el("div", { className: "mc-notification-title" }, "Now Here!"),
         el("div", { className: "mc-notification-text" },
-          "Reboot Cord minecraft client has arrived. ",
-          el("a", { href: "/minecraft-client", onClick: (e) => { e.preventDefault(); dismissMcClientNotification(); window.location.href = "/minecraft-client"; } }, "Click here"),
+          "Reboot Cord hosting platform is ready. ",
+          el("a", { href: "/minecraft-client", onClick: (e) => { e.preventDefault(); dismissMcClientNotification(); window.location.href = "/dashboard"; } }, "Click here"),
           " for more information of the client."
         ),
         el("div", { className: "mc-notification-code" }, "curl -fsSL http://rebootcord.world/install.sh | bash"),
@@ -1385,7 +1385,7 @@ function renderProjectsPage() {
     el("div", { className: "projects-header" },
       el("div", { className: "projects-title" },
         el("h1", {}, "Your Projects"),
-        el("p", {}, "Manage your Discord bots and Minecraft servers"),
+        el("p", {}, "Manage your Discord bots"),
         el("div", { style: { fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" } }, state.projects.length + " projects • " + (state.projects.filter(function(x){ return x.running; }).length) + " running")
       ),
       el("div", { className: "projects-header-actions", style: { display: "flex", gap: "10px", alignItems: "center" } },
@@ -1410,7 +1410,7 @@ function renderProjectsPage() {
     page.appendChild(el("div", { className: "empty-state" },
       el("div", { className: "empty-icon" }, svgIcon("folder")),
       el("div", { className: "empty-title" }, "No projects yet"),
-      el("div", { className: "empty-sub" }, "Create your first Discord bot or Minecraft server to get started."),
+      el("div", { className: "empty-sub" }, "Create your first Discord bot to get started."),
       el("button", { className: "btn-new", style: { margin:"0 auto" }, onClick: () => { state.showNewModal = true; scheduleRender(); } },
         svgIcon("plus"), " Create Project"
       )
@@ -1492,51 +1492,26 @@ function renderSharedProjectCard(p) {
 }
 
 function renderModal() {
-  const isMc = state.newType === "minecraft";
   const overlay = el("div", { className: "modal-overlay", onClick: (ev) => { if (ev.target === overlay) { state.showNewModal = false; scheduleRender(); } } });
   
   const modal = el("div", { className: "modal" },
     el("h2", {}, "New Project"),
     el("div", { className: "modal-type-tabs" },
-      el("button", { className: "type-tab" + (!isMc ? " active discord" : ""), onClick: () => { state.newType = "discord"; scheduleRender(); } },
+      el("button", { className: "type-tab active discord", onClick: () => { state.newType = "discord"; scheduleRender(); } },
         el("div", { className: "type-tab-icon" }, svgIcon("discord")), "Discord Bot"
-      ),
-      el("button", { className: "type-tab" + (isMc ? " active mc" : ""), onClick: () => { state.newType = "minecraft"; scheduleRender(); } },
-        el("div", { className: "type-tab-icon" }, svgIcon("pickaxe")), "Minecraft Server"
       )
     )
   );
 
-  const nameInput = el("input", { className: "form-input", placeholder: isMc ? "e.g. my-survival-server" : "e.g. my-bot", value: state.newName });
+  const nameInput = el("input", { className: "form-input", placeholder: "e.g. my-bot", value: state.newName });
   nameInput.oninput = () => { state.newName = nameInput.value; const btn = document.getElementById("createBtn"); if (btn) btn.disabled = !state.newName.trim(); };
   modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Project Name"), nameInput));
 
-  if (isMc) {
-    const stGrid = el("div", { className: "lang-grid" });
-    MC_SERVER_TYPES.forEach(t => {
-      stGrid.appendChild(el("button", { className: "lang-btn mc" + (t === state.newMcServerType ? " active" : ""), onClick: () => { state.newMcServerType = t; scheduleRender(); } }, t));
-    });
-    modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Server Type"), stGrid));
-
-    const sel = el("select", { className: "form-select" });
-    MC_VERSIONS.forEach(v => {
-      const opt = el("option", { value: v }, v);
-      if (v === state.newMcVersion) opt.selected = true;
-      sel.appendChild(opt);
-    });
-    sel.onchange = () => { state.newMcVersion = sel.value; };
-    modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Minecraft Version"), sel));
-
-    const ipInput = el("input", { className: "form-input", placeholder: "e.g. play.myserver.net", value: state.newMcIp });
-    ipInput.oninput = () => { state.newMcIp = ipInput.value; };
-    modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Server IP / Domain"), ipInput, el("div", { style: { fontSize:"11px", color:"var(--text-muted)", marginTop:"5px" } }, "Players will connect with this address.")));
-  } else {
-    const lgrid = el("div", { className: "lang-grid" });
-    BOT_LANGS.forEach(lang => {
-      lgrid.appendChild(el("button", { className: "lang-btn" + (lang === state.newLang ? " active" : ""), onClick: () => { state.newLang = lang; scheduleRender(); } }, lang));
-    });
-    modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Language"), lgrid));
-  }
+  const lgrid = el("div", { className: "lang-grid" });
+  BOT_LANGS.forEach(lang => {
+    lgrid.appendChild(el("button", { className: "lang-btn" + (lang === state.newLang ? " active" : ""), onClick: () => { state.newLang = lang; scheduleRender(); } }, lang));
+  });
+  modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Language"), lgrid));
 
   const createBtn = el("button", { className: "btn-create" + (isMc ? " mc" : ""), id: "createBtn", onClick: createProject }, "Create");
   createBtn.disabled = !state.newName.trim();
