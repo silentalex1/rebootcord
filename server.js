@@ -15,6 +15,37 @@ const bcrypt = require('bcrypt');
 
 const execAsync = util.promisify(cp.exec);
 
+const INSTALL_SCRIPT = `#!/usr/bin/env bash
+set -e
+RC_HOME="$HOME/.rebootcord-minecraft-client"
+echo ""
+echo "Reboot Cord Minecraft Client Installer"
+echo "---------------------------------------"
+echo "Installing all dependencies of reboot cord minecraft client.."
+sleep 1
+mkdir -p "$RC_HOME/mods"
+mkdir -p "$RC_HOME/config"
+mkdir -p "$RC_HOME/logs"
+echo "Creating client directories at $RC_HOME"
+sleep 1
+cat > "$RC_HOME/config/client.json" <<'EOF'
+{
+  "client": "rebootcord-minecraft-client",
+  "status": "coming-soon",
+  "source": "https://rebootcord.world/minecraft-client"
+}
+EOF
+echo "Writing client configuration.."
+sleep 1
+echo ""
+echo "The Reboot Cord Minecraft Client is not fully released yet."
+echo "Your local client folder has been prepared at: $RC_HOME"
+echo "Visit https://rebootcord.world/minecraft-client for updates."
+echo "---------------------------------------"
+echo "Setup complete."
+`;
+
+
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
 });
@@ -157,6 +188,26 @@ setInterval(() => { if (saveDBPending) saveDBNow(); }, 10000);
 process.on('exit', () => { if (saveDBPending) saveDBNow(); });
 
 let db = loadDB();
+if (!db.mcClientAnnounced) {
+  db.inboxMessages = db.inboxMessages || [];
+  (db.users || []).forEach(function(u) {
+    db.inboxMessages.unshift({
+      id: Date.now() + Math.floor(Math.random() * 100000),
+      title: 'Introducing Reboot cord Client!',
+      body: 'Reboot cord client is the next step of minecraft server hosting. Get ready to experience the best minecraft server hosting ever. Check out the info for more information of the client.',
+      linkText: 'info',
+      linkUrl: '/minecraft-client',
+      ts: Date.now(),
+      readBy: [],
+      sender: 'Reboot Cord',
+      rank: 'notice',
+      variant: 'release',
+      recipient: u.username
+    });
+  });
+  db.mcClientAnnounced = true;
+  saveDBNow();
+}
 const procs = {};
 const wsClients = new Set();
 const rateLimit = {};
@@ -576,6 +627,19 @@ app.post('/register', async (req, res) => {
     rank: 'notice',
     recipient: username
   });
+  db.inboxMessages.unshift({
+    id: Date.now() + 1,
+    title: 'Introducing Reboot cord Client!',
+    body: 'Reboot cord client is the next step of minecraft server hosting. Get ready to experience the best minecraft server hosting ever. Check out the info for more information of the client.',
+    linkText: 'info',
+    linkUrl: '/minecraft-client',
+    ts: Date.now() + 1,
+    readBy: [],
+    sender: 'Reboot Cord',
+    rank: 'notice',
+    variant: 'release',
+    recipient: username
+  });
   saveDB();
   setCookie(res, signToken(username));
   res.json({ success: true, username });
@@ -858,6 +922,24 @@ app.get('/api/shared-projects', (req, res) => {
 app.get('/api/inbox', (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false, messages: [] });
+  db.inboxMessages = db.inboxMessages || [];
+  const hasReleaseMsg = db.inboxMessages.some(m => m.variant === 'release' && (!m.recipient || m.recipient === u));
+  if (!hasReleaseMsg) {
+    db.inboxMessages.unshift({
+      id: Date.now() + Math.floor(Math.random() * 100000),
+      title: 'Introducing Reboot cord Client!',
+      body: 'Reboot cord client is the next step of minecraft server hosting. Get ready to experience the best minecraft server hosting ever. Check out the info for more information of the client.',
+      linkText: 'info',
+      linkUrl: '/minecraft-client',
+      ts: Date.now(),
+      readBy: [],
+      sender: 'Reboot Cord',
+      rank: 'notice',
+      variant: 'release',
+      recipient: u
+    });
+    saveDB();
+  }
   const msgs = (db.inboxMessages || [])
     .filter(m => !m.recipient || m.recipient === u)
     .map(m => ({
@@ -870,6 +952,18 @@ app.get('/api/inbox', (req, res) => {
       linkUrl: m.linkUrl
     }));
   res.json({ success: true, messages: msgs });
+});
+
+app.post('/api/inbox/setdate', (req, res) => {
+  const user = requireAdmin(req, res);
+  if (!user) return res.json({ success: false });
+  const m = (db.inboxMessages || []).find(x => String(x.id) === String(req.body.id));
+  if (!m) return res.json({ success: false, message: 'Message not found' });
+  const ts = Number(req.body.ts);
+  if (!ts || isNaN(ts)) return res.json({ success: false, message: 'Invalid date' });
+  m.ts = ts;
+  saveDB();
+  res.json({ success: true, ts: m.ts });
 });
 
 app.post('/api/inbox/delete', (req, res) => {
@@ -913,6 +1007,15 @@ app.post('/api/inbox/discord', (req, res) => {
   db.inboxMessages.unshift({ id: Date.now(), title: `Message from ${sender}`, body: message, ts: Date.now(), readBy: [], sender, rank: 'staff' });
   saveDB();
   res.json({ success: true });
+});
+
+app.get('/minecraft-client', (req, res) => {
+  res.sendFile(path.join(__dirname, 'minecraft-info', 'client.html'));
+});
+
+app.get('/install.sh', (req, res) => {
+  res.set('Content-Type', 'text/x-sh');
+  res.send(INSTALL_SCRIPT);
 });
 
 app.get('/inbox', (req, res) => {
