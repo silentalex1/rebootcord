@@ -1513,7 +1513,7 @@ function renderModal() {
   });
   modal.appendChild(el("div", { className: "form-group" }, el("label", { className: "form-label" }, "Language"), lgrid));
 
-  const createBtn = el("button", { className: "btn-create" + (isMc ? " mc" : ""), id: "createBtn", onClick: createProject }, "Create");
+  const createBtn = el("button", { className: "btn-create", id: "createBtn", onClick: createProject }, "Create");
   createBtn.disabled = !state.newName.trim();
   modal.appendChild(el("div", { className: "modal-actions" },
     el("button", { className: "btn-cancel", onClick: () => { state.showNewModal = false; scheduleRender(); } }, "Cancel"),
