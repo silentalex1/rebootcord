@@ -28,7 +28,12 @@ process.on('unhandledRejection', (reason) => {
 const app = express();
 app.set('trust proxy', 1);
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+server.headersTimeout = 20000;
+server.requestTimeout = 30000;
+server.keepAliveTimeout = 15000;
+server.maxHeadersCount = 100;
+server.maxConnections = 2000;
+const wss = new WebSocket.Server({ server, maxPayload: 64 * 1024 });
 
 const SDK_MIME = { '.js': 'application/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.map': 'application/json; charset=utf-8' };
 function safeJoinSdk(base, name) {
@@ -88,26 +93,59 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-const limiter = expressRateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
-  message: { success: false, message: 'Too many requests, please try again later.' }
+const ipViolations = new Map();
+const bannedIPs = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, until] of bannedIPs) { if (until <= now) bannedIPs.delete(ip); }
+  for (const [ip, v] of ipViolations) { if (v.expires <= now) ipViolations.delete(ip); }
+}, 60000);
+
+function banIp(ip, baseMs) {
+  const v = ipViolations.get(ip) || { count: 0, expires: 0 };
+  v.count++;
+  v.expires = Date.now() + 30 * 60 * 1000;
+  ipViolations.set(ip, v);
+  const duration = Math.min(baseMs * Math.pow(2, v.count - 1), 24 * 60 * 60 * 1000);
+  bannedIPs.set(ip, Date.now() + duration);
+}
+
+function makeBanningLimiter(opts) {
+  return expressRateLimit({
+    windowMs: opts.windowMs,
+    max: opts.max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (req, res) => {
+      banIp(req.ip, opts.banMs);
+      res.status(429).json({ success: false, message: 'Too many requests. Temporarily blocked.' });
+    }
+  });
+}
+
+app.use((req, res, next) => {
+  const ban = bannedIPs.get(req.ip);
+  if (ban) {
+    if (ban > Date.now()) {
+      res.set('Retry-After', String(Math.ceil((ban - Date.now()) / 1000)));
+      return res.status(429).json({ success: false, message: 'Temporarily blocked due to abuse.' });
+    }
+    bannedIPs.delete(req.ip);
+  }
+  next();
 });
+
+const globalLimiter = makeBanningLimiter({ windowMs: 60 * 1000, max: 240, banMs: 5 * 60 * 1000 });
+app.use(globalLimiter);
+
+const limiter = makeBanningLimiter({ windowMs: 15 * 60 * 1000, max: 300, banMs: 10 * 60 * 1000 });
 app.use('/api/', limiter);
 
-const authLimiter = expressRateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  message: { success: false, message: 'Too many login attempts, please try again later.' }
-});
+const authLimiter = makeBanningLimiter({ windowMs: 15 * 60 * 1000, max: 5, banMs: 30 * 60 * 1000 });
 app.use('/login', authLimiter);
 app.use('/register', authLimiter);
 
-const apiLimiter = expressRateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: { success: false, message: 'Too many API requests, please try again later.' }
-});
+const apiLimiter = makeBanningLimiter({ windowMs: 15 * 60 * 1000, max: 20, banMs: 15 * 60 * 1000 });
 app.use('/api/createcode', apiLimiter);
 
 const DB_FILE = path.join(DATA_DIR, 'db.json');
@@ -161,8 +199,27 @@ process.on('exit', () => { if (saveDBPending) saveDBNow(); });
 
 let db = loadDB();
 const procs = {};
+const intentionalStops = new Set();
 const wsClients = new Set();
 const rateLimit = {};
+
+const restartState = {};
+function nextRestartDelay(id) {
+  const now = Date.now();
+  const s = restartState[id] || (restartState[id] = { count: 0, windowStart: now });
+  if (now - s.windowStart > 2 * 60 * 1000) { s.count = 0; s.windowStart = now; }
+  s.count++;
+  if (s.count > 6) return -1;
+  return Math.min(3000 * Math.pow(2, s.count - 1), 60000);
+}
+function noteStableRun(id, startedAt) {
+  setTimeout(() => {
+    if (Date.now() - startedAt >= 5 * 60 * 1000 && restartState[id]) {
+      restartState[id].count = 0;
+      restartState[id].windowStart = Date.now();
+    }
+  }, 5 * 60 * 1000);
+}
 function checkRate(key, max, winMs) { const now = Date.now(); if (!rateLimit[key]) rateLimit[key] = []; rateLimit[key] = rateLimit[key].filter(t => now - t < winMs); if (rateLimit[key].length >= max) return false; rateLimit[key].push(now); return true; }
 
 const PY_STDLIB = new Set(["os","sys","json","time","random","re","math","datetime","asyncio","pathlib","typing","io","collections","subprocess","threading","socket","abc","argparse","base64","binascii","bisect","builtins","bz2","calendar","cgi","cgitb","chunk","cmd","code","codecs","codeop","colorsys","compileall","concurrent","configparser","contextlib","contextvars","copy","copyreg","crypt","csv","ctypes","curses","dataclasses","dbm","decimal","difflib","dis","distutils","doctest","email","encodings","ensurepip","enum","errno","faulthandler","fcntl","filecmp","fileinput","fnmatch","formatter","fractions","ftplib","functools","gc","getopt","getpass","gettext","glob","graphlib","grp","gzip","hashlib","heapq","hmac","html","http","idlelib","imaplib","imghdr","imp","importlib","inspect","keyword","lib2to3","linecache","locale","logging","lzma","mailbox","mailcap","marshal","mimetypes","mmap","modulefinder","msilib","msvcrt","multiprocessing","netrc","nis","nntplib","ntpath","numbers","opcode","operator","optparse","ossaudiodev","parser","pdb","pickle","pickletools","pipes","pkgutil","platform","plistlib","poplib","posix","posixpath","pprint","profile","pstats","pty","pwd","py_compile","pyclbr","pydoc","queue","quopri","readline","reprlib","resource","rlcompleter","runpy","sched","secrets","select","selectors","shelve","shlex","shutil","signal","site","smtpd","smtplib","sndhdr","socketserver","spwd","sqlite3","sre","sre_compile","sre_constants","sre_parse","ssl","stat","statistics","statvfs","string","stringprep","struct","sunau","symbol","symtable","sysconfig","syslog","tabnanny","tarfile","telnetlib","tempfile","termios","test","textwrap","timeit","tkinter","token","tokenize","trace","traceback","tracemalloc","tty","turtle","turtledemo","types","unicodedata","unittest","urllib","uu","uuid","venv","warnings","wave","weakref","webbrowser","winreg","winsound","wsgiref","xdrlib","xml","xmlrpc","zipapp","zipfile","zipimport","zlib","zoneinfo"]);
@@ -408,13 +465,23 @@ function broadcastEvent(username, payload) {
   }
 }
 
+const wsIpCounts = new Map();
 wss.on('connection', (ws, req) => {
+  const ip = req.socket.remoteAddress || 'unknown';
+  if (bannedIPs.has(ip) && bannedIPs.get(ip) > Date.now()) return ws.close(1013, 'Blocked');
+  const current = wsIpCounts.get(ip) || 0;
+  if (current >= 10) return ws.close(1013, 'Too many connections');
+  wsIpCounts.set(ip, current + 1);
+  ws.on('close', () => wsIpCounts.set(ip, Math.max(0, (wsIpCounts.get(ip) || 1) - 1)));
+
   const token = parseCookies(req)['rc_tok'];
   const user = verifyToken(token);
   if (!user) return ws.close();
   ws.username = user;
+  ws.ip = ip;
   wsClients.add(ws);
   ws.on('message', (msg) => {
+    if (!checkRate('ws:' + ip, 40, 1000)) return;
     try {
       const data = JSON.parse(msg);
       if (data.event === 'cmd' && data.projectId && procs[data.projectId]) {
@@ -636,10 +703,9 @@ app.post('/api/projects', (req, res) => {
   const user = db.users.find(x => x.username === u);
   if (!user) return res.json({ success: false });
   user.projects = req.body.projects || [];
-  db.mcPorts = db.mcPorts || 25565;
   user.projects.forEach(p => {
     if (p.type === 'minecraft' && !p.port) {
-      p.port = db.mcPorts++;
+      p.port = assignMcClientPort();
     }
     const pDir = path.join(PROJECTS_DIR, String(p.id));
     if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
@@ -666,6 +732,7 @@ app.post('/api/projects/:id/delete', (req, res) => {
   const members = projectMemberUsernames(access);
 
   if (procs[p.id]) {
+    intentionalStops.add(p.id);
     killProcessTree(procs[p.id], 'SIGKILL');
     delete procs[p.id];
   }
@@ -966,6 +1033,10 @@ app.post('/api/inbox/discord', (req, res) => {
 
 
 
+app.get('/health', (req, res) => {
+  res.json({ success: true, status: 'ok', uptime: process.uptime() });
+});
+
 app.get('/install.sh', (req, res) => {
   res.set('Content-Type', 'text/x-sh');
   res.sendFile(path.join(__dirname, 'install.sh'));
@@ -995,6 +1066,11 @@ app.get('/install', (req, res) => {
 app.get('/minecraft-client', (req, res) => {
   res.sendFile(path.join(__dirname, 'minecraft-info', 'client.html'));
 });
+
+app.get('/backend-mc', (req, res) => {
+  res.sendFile(path.join(__dirname, 'backend-mc', 'backend.html'));
+});
+app.use('/backend-mc', express.static(path.join(__dirname, 'backend-mc')));
 
 app.get('/inbox', (req, res) => {
   res.sendFile(path.join(__dirname, 'inbox-system', 'inbox.html'));
@@ -1435,6 +1511,133 @@ function broadcastToMembers(members, payload) {
   members.forEach(m => broadcastEvent(m, payload));
 }
 
+async function ensureJava() {
+  const jre25Bin = path.join(PROJECTS_DIR, 'jre25', 'bin', 'java');
+  if (fs.existsSync(jre25Bin)) return jre25Bin;
+  try {
+    const { stdout, stderr } = await execAsync('java -version', { shell: true });
+    const out = (stdout || '') + (stderr || '');
+    const m = out.match(/version "(\d+)/);
+    const major = m ? parseInt(m[1], 10) : 0;
+    if (major >= 21) return 'java';
+  } catch (e) {}
+  try {
+    await execAsync('curl -L -o jre25.tar.gz https://github.com/adoptium/temurin25-binaries/releases/latest/download/OpenJDK25U-jre_x64_linux_hotspot.tar.gz', { cwd: PROJECTS_DIR, shell: true });
+    await execAsync('mkdir -p jre25 && tar -xzf jre25.tar.gz -C jre25 --strip-components=1', { cwd: PROJECTS_DIR, shell: true });
+    if (fs.existsSync(jre25Bin)) return jre25Bin;
+  } catch (e) {}
+  const jre21Bin = path.join(PROJECTS_DIR, 'jre', 'bin', 'java');
+  if (fs.existsSync(jre21Bin)) return jre21Bin;
+  try {
+    await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR, shell: true });
+    await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR, shell: true });
+    if (fs.existsSync(jre21Bin)) return jre21Bin;
+  } catch (e) {}
+  return 'java';
+}
+
+async function launchMinecraftProject(p, members) {
+  function logAll(msg, type) { broadcastToMembers(members, { event: 'log', projectId: p.id, msg, type: type || 'info' }); }
+  function statusAll(running) { broadcastToMembers(members, { event: 'statusChange', projectId: p.id, running }); }
+
+  const pDir = path.join(PROJECTS_DIR, String(p.id));
+  if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
+
+  intentionalStops.delete(p.id);
+  p.running = true;
+  saveDB();
+  statusAll(true);
+
+  const javaCmd = await ensureJava();
+
+  let bindIp = '0.0.0.0';
+  if (p.ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(p.ip)) bindIp = p.ip;
+  fs.writeFileSync(path.join(pDir, 'eula.txt'), 'eula=true\n');
+  fs.writeFileSync(path.join(pDir, 'server.properties'), `server-port=${p.port}\nserver-ip=${bindIp}\nonline-mode=false\nmotd=${p.name || 'Minecraft Server'}\n`);
+
+  const jarPath = path.join(pDir, 'server.jar');
+  if (!fs.existsSync(jarPath)) {
+    logAll('[System] Downloading Minecraft server for ' + (p.serverType || 'Vanilla') + ' ' + (p.version || '1.21.5') + '...', 'sys');
+    try {
+      if (p.serverType === 'Paper') {
+        const apiBase = 'https://api.papermc.io/v2/projects/paper';
+        const verRes = await axios.get(apiBase + '/versions/' + p.version);
+        const builds = verRes.data.builds;
+        const latestBuild = builds[builds.length - 1];
+        const dlUrl = apiBase + '/versions/' + p.version + '/builds/' + latestBuild + '/downloads/paper-' + p.version + '-' + latestBuild + '.jar';
+        await execAsync('curl -L -o server.jar "' + dlUrl + '"', { cwd: pDir, shell: true });
+      } else {
+        const man = await axios.get('https://launchermeta.mojang.com/mc/game/version_manifest.json');
+        const verEntry = man.data.versions.find(v => v.id === p.version);
+        if (verEntry) {
+          const vinfo = await axios.get(verEntry.url);
+          const serverUrl = vinfo.data.downloads.server.url;
+          await execAsync('curl -L -o server.jar "' + serverUrl + '"', { cwd: pDir, shell: true });
+        } else {
+          await execAsync('curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar', { cwd: pDir, shell: true });
+        }
+      }
+      logAll('[System] Download complete.', 'ok');
+    } catch (e) {
+      logAll('[System] Failed to download server jar: ' + e.message, 'err');
+    }
+  }
+  if (!fs.existsSync(jarPath)) {
+    logAll('[System] No server.jar found. Use Files tab to upload the correct server jar for this type/version, then Start again.', 'warn');
+  }
+  const startedAt = Date.now();
+  const proc = cp.spawn(javaCmd, ['-Xms512M', '-Xmx1024M', '-XX:+UseG1GC', '-XX:+ParallelRefProcEnabled', '-XX:MaxGCPauseMillis=200', '-XX:+UnlockExperimentalVMOptions', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true, detached: true });
+  procs[p.id] = proc;
+  noteStableRun(p.id, startedAt);
+
+  proc.on('error', (err) => {
+    logAll(`[System] Server failed to start: ${err.message}`, 'err');
+  });
+
+  proc.stdout.on('data', d => {
+    d.toString().split('\n').forEach(line => {
+      if (!line.trim()) return;
+      logAll(line.trim(), 'server');
+      if (line.includes('Preparing level')) {
+        logAll('[System] World created', 'ok');
+      }
+      if (line.includes('Done (')) {
+        logAll(`[System] your ${p.ip || 'play.server.net'}:${p.port} has successfully started`, 'ok');
+      }
+    });
+  });
+
+  proc.stderr.on('data', d => {
+    d.toString().split('\n').forEach(line => {
+      if (line.trim()) logAll(line.trim(), 'warn');
+    });
+  });
+
+  proc.on('close', () => {
+    if (procs[p.id] === proc) delete procs[p.id];
+    const wasIntentional = intentionalStops.has(p.id);
+    intentionalStops.delete(p.id);
+    p.running = false;
+    saveDB();
+    statusAll(false);
+    if (wasIntentional) {
+      logAll('[System] Process exited.', 'sys');
+      return;
+    }
+    const delay = nextRestartDelay(p.id);
+    if (delay === -1) {
+      logAll('[System] Server crashed repeatedly. Auto-restart paused, check your config/files and start manually.', 'err');
+      return;
+    }
+    logAll(`[System] Process exited unexpectedly. Restarting in ${Math.round(delay / 1000)}s...`, 'warn');
+    setTimeout(() => {
+      const stillExists = findOwnerAndProject(p.id).p;
+      if (!stillExists) return;
+      launchMinecraftProject(p, members).catch(e => logAll('[System] Restart failed: ' + e.message, 'err'));
+    }, delay);
+  });
+}
+
 async function startProjectHandler(req, res) {
   const u = getUser(req);
   if (!u) return res.json({ success: false });
@@ -1450,6 +1653,7 @@ async function startProjectHandler(req, res) {
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
 
+  intentionalStops.add(p.id);
   if (procs[p.id]) {
     killProcessTree(procs[p.id], 'SIGKILL');
     delete procs[p.id];
@@ -1460,88 +1664,8 @@ async function startProjectHandler(req, res) {
   statusAll(true);
 
   if (p.type === 'minecraft') {
-    let javaCmd = 'java';
-    try {
-      await execAsync('java -version', { shell: true });
-    } catch (e) {
-      const jreDir = path.join(PROJECTS_DIR, 'jre');
-      const jreBin = path.join(jreDir, 'bin', 'java');
-      if (!fs.existsSync(jreBin)) {
-        logAll('[System] Java not found locally. Downloading portable JRE...', 'sys');
-        try {
-          await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR, shell: true });
-          await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR, shell: true });
-          logAll('[System] JRE downloaded successfully.', 'ok');
-        } catch (err) {
-          logAll('[System] Failed to download JRE: ' + err.message, 'err');
-        }
-      }
-      javaCmd = fs.existsSync(jreBin) ? jreBin : 'java';
-    }
-
-    let bindIp = '0.0.0.0';
-    if (p.ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(p.ip)) bindIp = p.ip;
-    fs.writeFileSync(path.join(pDir, 'eula.txt'), 'eula=true\n');
-    fs.writeFileSync(path.join(pDir, 'server.properties'), `server-port=${p.port}\nserver-ip=${bindIp}\nonline-mode=false\nmotd=${p.name || 'Minecraft Server'}\n`);
-    
-    const jarPath = path.join(pDir, 'server.jar');
-    if (!fs.existsSync(jarPath)) {
-      logAll('[System] Downloading Minecraft server for ' + (p.serverType || 'Vanilla') + ' ' + (p.version || '1.21.5') + '...', 'sys');
-      try {
-        if (p.serverType === 'Paper') {
-          const apiBase = 'https://api.papermc.io/v2/projects/paper';
-          const verRes = await axios.get(apiBase + '/versions/' + p.version);
-          const builds = verRes.data.builds;
-          const latestBuild = builds[builds.length - 1];
-          const dlUrl = apiBase + '/versions/' + p.version + '/builds/' + latestBuild + '/downloads/paper-' + p.version + '-' + latestBuild + '.jar';
-          await execAsync('curl -L -o server.jar "' + dlUrl + '"', { cwd: pDir, shell: true });
-        } else {
-          const man = await axios.get('https://launchermeta.mojang.com/mc/game/version_manifest.json');
-          const verEntry = man.data.versions.find(v => v.id === p.version);
-          if (verEntry) {
-            const vinfo = await axios.get(verEntry.url);
-            const serverUrl = vinfo.data.downloads.server.url;
-            await execAsync('curl -L -o server.jar "' + serverUrl + '"', { cwd: pDir, shell: true });
-          } else {
-            await execAsync('curl -L -o server.jar https://piston-data.mojang.com/v1/objects/8dd1a28015f51b180288e994e101102e3dc23eea/server.jar', { cwd: pDir, shell: true });
-          }
-        }
-        logAll('[System] Download complete.', 'ok');
-      } catch (e) {
-        logAll('[System] Failed to download server jar: ' + e.message, 'err');
-      }
-    }
-    if (!fs.existsSync(jarPath)) {
-      logAll('[System] No server.jar found. Use Files tab to upload the correct server jar for this type/version, then Start again.', 'warn');
-    }
-    const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: pDir, shell: true, detached: true });
-    procs[p.id] = proc;
-
-    proc.on('error', (err) => {
-      logAll(`[System] Server failed to start: ${err.message}`, 'err');
-    });
-    
-    proc.stdout.on('data', d => {
-      d.toString().split('\n').forEach(line => {
-        if (!line.trim()) return;
-        logAll(line.trim(), 'server');
-        if (line.includes('Preparing level')) {
-          logAll('[System] World created', 'ok');
-        }
-        if (line.includes('Done (')) {
-          logAll(`[System] your ${p.ip || 'play.server.net'}:${p.port} has successfully started`, 'ok');
-        }
-      });
-    });
-    
-    proc.stderr.on('data', d => {
-      d.toString().split('\n').forEach(line => {
-        if (line.trim()) logAll(line.trim(), 'warn');
-      });
-    });
-    
-    proc.on('close', () => { if (procs[p.id] === proc) delete procs[p.id]; p.running = false; saveDB(); logAll('[System] Process exited.', 'sys'); statusAll(false); });
-
+    intentionalStops.delete(p.id);
+    await launchMinecraftProject(p, members);
   } else {
     if (p.files) {
       for (const fname of Object.keys(p.files)) {
@@ -1650,6 +1774,7 @@ app.post('/api/projects/:id/stop', (req, res) => {
 
   if (procs[p.id]) {
     const proc = procs[p.id];
+    intentionalStops.add(p.id);
     broadcastToMembers(members, { event: 'log', projectId: p.id, msg: '[System] Stopping process...', type: 'warn' });
     killProcessTree(proc, 'SIGTERM');
     setTimeout(() => {
@@ -1680,6 +1805,7 @@ app.post('/api/projects/:id/kill', (req, res) => {
 
   if (procs[p.id]) {
     const proc = procs[p.id];
+    intentionalStops.add(p.id);
     killProcessTree(proc, 'SIGKILL');
     delete procs[p.id];
   }
@@ -2341,29 +2467,27 @@ app.post('/api/v1/feedback-reply', (req, res) => {
 
 const mcClientProcs = {};
 
+const MC_PORT_MIN = parseInt(process.env.MC_PORT_MIN, 10) || 25565;
+const MC_PORT_MAX = parseInt(process.env.MC_PORT_MAX, 10) || 25864;
+function usedMcPorts() {
+  const used = new Set();
+  (db.users || []).forEach(u => (u.projects || []).forEach(p => { if (p.type === 'minecraft' && p.port) used.add(p.port); }));
+  (db.mcClientServers || []).forEach(s => { if (s.port) used.add(s.port); });
+  return used;
+}
 function assignMcClientPort() {
-  db.mcPorts = db.mcPorts || 25565;
-  return db.mcPorts++;
+  const used = usedMcPorts();
+  for (let port = MC_PORT_MIN; port <= MC_PORT_MAX; port++) {
+    if (!used.has(port)) return port;
+  }
+  return null;
 }
 
 async function launchMcClientServer(server) {
   const sDir = path.join(PROJECTS_DIR, 'mc-client', server.id);
   if (!fs.existsSync(sDir)) fs.mkdirSync(sDir, { recursive: true });
 
-  let javaCmd = 'java';
-  const jreDir = path.join(PROJECTS_DIR, 'jre');
-  const jreBin = path.join(jreDir, 'bin', 'java');
-  try {
-    await execAsync('java -version', { shell: true });
-  } catch (e) {
-    if (!fs.existsSync(jreBin)) {
-      try {
-        await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR, shell: true });
-        await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR, shell: true });
-      } catch (err) {}
-    }
-    javaCmd = fs.existsSync(jreBin) ? jreBin : 'java';
-  }
+  const javaCmd = await ensureJava();
 
   let bindIp = '0.0.0.0';
   if (server.ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(server.ip)) bindIp = server.ip;
@@ -2403,11 +2527,13 @@ async function launchMcClientServer(server) {
     return;
   }
 
-  const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: sDir, shell: true, detached: true });
+  const startedAt = Date.now();
+  const proc = cp.spawn(javaCmd, ['-Xms512M', '-Xmx1024M', '-XX:+UseG1GC', '-XX:+ParallelRefProcEnabled', '-XX:MaxGCPauseMillis=200', '-XX:+UnlockExperimentalVMOptions', '-jar', 'server.jar', 'nogui'], { cwd: sDir, shell: true, detached: true });
   mcClientProcs[server.id] = proc;
   server.status = 'running';
   server.error = null;
   saveDB();
+  noteStableRun(server.id, startedAt);
 
   proc.on('error', (err) => {
     server.status = 'failed';
@@ -2419,23 +2545,45 @@ async function launchMcClientServer(server) {
     if (mcClientProcs[server.id] === proc) delete mcClientProcs[server.id];
     const current = (db.mcClientServers || []).find(s => s.id === server.id);
     if (current && current.status !== 'stopped') {
+      const delay = nextRestartDelay(server.id);
+      if (delay === -1) {
+        current.status = 'crashed';
+        current.error = 'Crashed repeatedly, auto-restart paused.';
+        saveDB();
+        return;
+      }
       current.status = 'restarting';
       saveDB();
-      setTimeout(() => launchMcClientServer(current), 5000);
+      setTimeout(() => launchMcClientServer(current), delay);
     }
   });
 }
 
+const MC_VERSION_RE = /^(1\.\d+(\.\d+)?|\d{2}\.\d+(\.\d+)?)$/;
+
+app.post('/api/minecraft/ping', (req, res) => {
+  const u = getUser(req);
+  if (!u) return res.json({ success: false, message: 'Not logged in.' });
+  const { version, serverType } = req.body || {};
+  if (!version || !MC_VERSION_RE.test(version)) return res.json({ success: false, message: 'Enter a valid Minecraft version.' });
+  const allowedTypes = ['Vanilla', 'Paper', 'Fabric', 'Forge', 'Bukkit'];
+  const type = allowedTypes.includes(serverType) ? serverType : 'Vanilla';
+  broadcastEvent(u, { event: 'mcPing', version, serverType: type });
+  res.json({ success: true });
+});
+
 app.post('/api/minecraft/create', async (req, res) => {
   const { version, ip, serverType } = req.body || {};
-  if (!version || !/^1\.\d+(\.\d+)?$/.test(version)) return res.json({ success: false, message: 'Enter a valid Minecraft version.' });
+  if (!version || !MC_VERSION_RE.test(version)) return res.json({ success: false, message: 'Enter a valid Minecraft version.' });
+  const port = assignMcClientPort();
+  if (!port) return res.json({ success: false, message: 'No hosting slots available right now, try again later.' });
   const id = 'mc-' + crypto.randomBytes(8).toString('hex');
   const server = {
     id,
     version,
     ip: ip || '',
     serverType: serverType || 'Vanilla',
-    port: assignMcClientPort(),
+    port,
     status: 'starting',
     error: null,
     createdAt: Date.now(),
@@ -2472,9 +2620,33 @@ app.use((req, res) => {
   res.status(404).json({ success: false, message: 'Not found' });
 });
 
+if (process.env.KEEPALIVE_URL) {
+  setInterval(() => {
+    axios.get(process.env.KEEPALIVE_URL).catch(() => {});
+  }, 4 * 60 * 1000);
+}
+
 const PORT = process.env.PORT || 1000;
 server.listen(PORT, () => {
   console.log('Reboot Cord running on port ' + PORT);
   const isRender = !!process.env.RENDER;
   console.log('PrysmisAI model: ' + OLLAMA_VISION_MODEL + (isRender ? ' (Render deployment - set GEMINI_API_KEY for cloud AI or OLLAMA_BASE_URL for remote Ollama)' : ' (local default port 1000)'));
+
+  (db.users || []).forEach(owner => {
+    (owner.projects || []).forEach(p => {
+      if (p.type === 'minecraft' && p.running) {
+        const members = [owner.username];
+        (p.shared || []).forEach(s => { if (!members.includes(s.username)) members.push(s.username); });
+        console.log('[Boot] Resuming minecraft server: ' + p.name);
+        launchMinecraftProject(p, members).catch(e => console.error('[Boot] Failed to resume ' + p.name + ': ' + e.message));
+      }
+    });
+  });
+
+  (db.mcClientServers || []).forEach(s => {
+    if (s.status === 'running' || s.status === 'starting' || s.status === 'restarting') {
+      console.log('[Boot] Resuming client-hosted minecraft server: ' + s.id);
+      launchMcClientServer(s);
+    }
+  });
 });
