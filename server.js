@@ -895,9 +895,9 @@ app.get('/api/inbox', (req, res) => {
     db.inboxMessages.unshift({
       id: Date.now() + Math.floor(Math.random() * 100000) + 1,
       title: 'Introducing Reboot cord Client!',
-      body: 'Reboot cord hosting platform is ready. Check out the dashboard to create your projects.',
-      linkText: 'dashboard',
-      linkUrl: '/dashboard',
+      body: 'Reboot cord client is the next step of minecraft server hosting. Get ready to experience the best minecraft server hosting ever. Check out the info for more information of the client.',
+      linkText: 'info',
+      linkUrl: '/minecraft-client',
       ts: Date.now(),
       readBy: [],
       sender: 'Reboot Cord',
@@ -1280,6 +1280,7 @@ const TERMINAL_HELP = [
   'npm install [package...] - install node packages (no args installs all dependencies)',
   'python <file> [args...] - run a python file',
   'node <file> [args...] - run a node file',
+  'silent restart - restarts the bot without a full reset, skips launch if already running',
   'clear - clear the terminal output'
 ].join('\n');
 
@@ -1311,7 +1312,7 @@ function runStreamedCommand(username, projectId, bin, args, cwd) {
   });
 }
 
-app.post('/api/projects/:id/terminal', (req, res) => {
+app.post('/api/projects/:id/terminal', async (req, res) => {
   const u = getUser(req);
   if (!u) return res.json({ success: false, output: 'Not authenticated.' });
   const access = getAccess(u, req.params.id);
@@ -1395,6 +1396,18 @@ app.post('/api/projects/:id/terminal', (req, res) => {
     const npmArgs = ['install'].concat(args.slice(1));
     res.json({ success: true, streaming: true });
     runStreamedCommand(u, p.id, 'npm', npmArgs, pDir);
+    return;
+  }
+
+  if (cmd === 'silent' && args[0] === 'restart') {
+    if (!canControl(access)) return res.json({ success: false, output: 'Permission denied.' });
+    if (procs[p.id]) {
+      killProcessTree(procs[p.id], 'SIGKILL');
+      delete procs[p.id];
+    }
+    p.running = false;
+    saveDB();
+    await startProjectHandler(req, res);
     return;
   }
 
