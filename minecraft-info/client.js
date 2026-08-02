@@ -10,7 +10,7 @@ installSection.appendChild(installTitle);
 
 const installDesc = document.createElement('p');
 installDesc.className = 'mc-install-desc';
-installDesc.textContent = 'Run this command in your terminal to install the Reboot Cord Minecraft mod client:';
+installDesc.textContent = 'Run this command in your terminal to install the Reboot Cord Client app:';
 installSection.appendChild(installDesc);
 
 const codeWrap = document.createElement('div');
@@ -47,7 +47,7 @@ featuresSection.className = 'mc-features-section';
 
 const featuresTitle = document.createElement('h2');
 featuresTitle.className = 'mc-features-title';
-featuresTitle.textContent = "Reboot cord minecraft client mod is a mod that let's you:";
+featuresTitle.textContent = "The Reboot Cord Client app let's you:";
 featuresSection.appendChild(featuresTitle);
 
 const featuresList = document.createElement('ul');
