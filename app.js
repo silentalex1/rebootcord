@@ -1,11 +1,16 @@
 const MC_VERSIONS = [
-  "1.21.5","1.21.4","1.21.3","1.21.2","1.21.1","1.21",
+  "26.2","26.1.1","26.1",
+  "1.21.8","1.21.7","1.21.6","1.21.5","1.21.4","1.21.3","1.21.2","1.21.1","1.21",
   "1.20.6","1.20.5","1.20.4","1.20.3","1.20.2","1.20.1","1.20",
   "1.19.4","1.19.3","1.19.2","1.19.1","1.19",
   "1.18.2","1.18.1","1.18","1.17.1","1.17",
   "1.16.5","1.16.4","1.16.3","1.16.2","1.16.1","1.16",
   "1.15.2","1.15.1","1.15","1.14.4","1.14.3","1.14.2","1.14.1","1.14",
-  "1.13.2","1.13.1","1.13","1.12.2","1.12.1","1.12","1.8.9","1.8.8","1.7.10"
+  "1.13.2","1.13.1","1.13","1.12.2","1.12.1","1.12",
+  "1.11.2","1.11.1","1.11","1.10.2","1.10",
+  "1.9.4","1.9.2","1.9",
+  "1.8.9","1.8.8","1.8","1.7.10","1.7.2",
+  "1.6.4","1.5.2","1.4.7"
 ];
 const BOT_LANGS = ["JavaScript","TypeScript","Python","Lua","Java","Go","Rust","Ruby","C#","PHP","Kotlin","Dart"];
 const MC_SERVER_TYPES = ["Vanilla","Paper","Forge","Fabric","Spigot","Purpur"];
@@ -38,7 +43,7 @@ const state = {
   newType: "discord",
   newName: "",
   newLang: "JavaScript",
-  newMcVersion: "1.21.5",
+  newMcVersion: "26.2",
   newMcServerType: "Vanilla",
   newMcIp: "",
   editorFile: "",
@@ -110,7 +115,10 @@ const state = {
   showShareInviteNotification: false,
   auditLog: [],
   consoleTab: "console",
-  showMcClientNotification: false
+  showMcClientNotification: false,
+  mcPingData: null,
+  mcPingDomain: "",
+  mcPingCreating: false
 };
 
 let ws;
@@ -158,6 +166,12 @@ function connectWS() {
           }
           scheduleRender();
         }
+      }
+      if (data.event === 'mcPing') {
+        state.mcPingData = { version: data.version || "", serverType: data.serverType || "Vanilla" };
+        state.mcPingDomain = "";
+        state.mcPingCreating = false;
+        scheduleRender();
       }
       if (data.event === 'statusChange') {
         const p3 = state.projects.find(x => String(x.id) === String(data.projectId)) || (state.sharedProjects && state.sharedProjects.find(x => String(x.id) === String(data.projectId)));
@@ -536,7 +550,7 @@ function renderMcClientNotification() {
           el("a", { href: "/minecraft-client", onClick: (e) => { e.preventDefault(); dismissMcClientNotification(); window.location.href = "/dashboard"; } }, "Click here"),
           " for more information of the client."
         ),
-        el("div", { className: "mc-notification-code" }, "curl -fsSL http://rebootcord.world/install.sh | bash"),
+        el("div", { className: "mc-notification-code" }, "curl -fsSL https://rebootcord.world/install.sh | bash"),
         el("button", { className: "inbox-notification-btn mc-notification-btn", onClick: dismissMcClientNotification }, "okay")
       )
     )
@@ -1343,6 +1357,9 @@ function render() {
   if (state.showShareInviteNotification) {
     document.body.appendChild(renderShareInviteNotification());
   }
+  if (state.mcPingData) {
+    document.body.appendChild(renderMcPingModal());
+  }
   scrollConsolesToBottom();
 }
 
@@ -1523,6 +1540,85 @@ function renderModal() {
 
   overlay.appendChild(modal);
   return overlay;
+}
+
+function renderMcPingModal() {
+  if (!state.mcPingData) return null;
+  const data = state.mcPingData;
+  const overlay = el("div", { className: "modal-overlay", onClick: (ev) => { if (ev.target === overlay && !state.mcPingCreating) { state.mcPingData = null; scheduleRender(); } } });
+
+  const domainInput = el("input", { className: "form-input", placeholder: "Enter any minecraft domain..", value: state.mcPingDomain });
+  domainInput.oninput = () => {
+    state.mcPingDomain = domainInput.value;
+    const btn = document.getElementById("mcPingCreateBtn");
+    if (btn) btn.disabled = !domainInput.value.trim() || state.mcPingCreating;
+  };
+
+  const createBtn = el("button", { className: "btn-create", id: "mcPingCreateBtn", onClick: () => createServerFromPing() }, state.mcPingCreating ? "Creating..." : "Create Server.");
+  createBtn.disabled = !state.mcPingDomain.trim() || state.mcPingCreating;
+
+  const modal = el("div", { className: "modal mc-ping-modal" },
+    el("h2", {}, "Welcome to hosting!"),
+    el("div", { className: "mc-ping-sub" }, "ping received.. (" + (data.serverType || "Vanilla") + (data.version ? " " + data.version : "") + ")"),
+    el("div", { className: "form-group" },
+      el("label", { className: "form-label" }, "Domain"),
+      domainInput
+    ),
+    el("div", { className: "modal-actions" },
+      el("button", { className: "btn-cancel", onClick: () => { if (!state.mcPingCreating) { state.mcPingData = null; scheduleRender(); } } }, "Cancel"),
+      createBtn
+    )
+  );
+
+  overlay.appendChild(modal);
+  return overlay;
+}
+
+function createServerFromPing() {
+  if (!state.mcPingData || state.mcPingCreating) return;
+  const domain = state.mcPingDomain.trim();
+  if (!domain) return;
+
+  state.mcPingCreating = true;
+  scheduleRender();
+
+  const p = {
+    id: Date.now(),
+    name: domain,
+    type: "minecraft",
+    lang: "",
+    version: state.mcPingData.version || "1.20.4",
+    serverType: state.mcPingData.serverType || "Vanilla",
+    ip: domain,
+    running: false,
+    files: {},
+    serverAbout: "",
+    serverAboutFont: "",
+    _mcFiles: [],
+    _mcMods: [],
+    _mcBackups: []
+  };
+  if (!p.port) p.port = 25565 + (state.projects ? state.projects.length : 0);
+
+  state.projects.push(p);
+
+  fetch("/api/projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projects: state.projects })
+  }).then(function(r){ return r.json(); }).then(function(){
+    return fetch("/api/projects/" + p.id + "/start", { method: "POST" });
+  }).then(function(r){ return r.json(); }).then(function(data){
+    p.running = !!(data && data.success);
+    state.mcPingCreating = false;
+    state.mcPingData = null;
+    state.mcPingDomain = "";
+    logAudit('create', 'Minecraft server created from client ping — ' + p.name);
+    scheduleRender();
+  }).catch(function(){
+    state.mcPingCreating = false;
+    scheduleRender();
+  });
 }
 
 function getDefaultFilename(p) {
