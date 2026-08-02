@@ -6,39 +6,18 @@ services:
     container_name: rebootcord-main
     ports:
       - "1000:1000"
+      - "25565-25864:25565-25864"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     environment:
       - NODE_ENV=production
       - PORT=1000
       - SESSION_SECRET=rebootcord-secret-key
+      - MC_PORT_MIN=25565
+      - MC_PORT_MAX=25864
     volumes:
       - ./data:/app/data
       - ./projects_data:/app/projects_data
     restart: unless-stopped
-
-  minecraft-hosting:
-    image: itzg/minecraft-server:latest
-    container_name: minecraft-hosting-manager
-    ports:
-      - "25565:25565"
-      - "25575:25575"
-    environment:
-      EULA: "TRUE"
-      TYPE: "PAPER"
-      VERSION: "1.20.4"
-      SERVER_PORT: 25565
-      SERVER_NAME: "Reboot Cord Hosting"
-      MOTD: "Hosted by Reboot Cord"
-      MAX_PLAYERS: 20
-      ALLOW_NETHER: "true"
-      ENABLE_RCON: "true"
-      RCON_PORT: 25575
-      RCON_PASSWORD: "rebootcord"
-    volumes:
-      - ./minecraft-data:/data
-    restart: unless-stopped
-    networks:
-      - minecraft-network
-
-networks:
-  minecraft-network:
-    driver: bridge
