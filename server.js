@@ -134,8 +134,8 @@ function storedStringToBuffer(str) {
 }
 
 function loadDB() {
-  try { if (fs.existsSync(DB_FILE)) { const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8')); if(!d.changelogs) d.changelogs=[]; if(!d.apiKeys) d.apiKeys=[]; if(!d.feedbacks) d.feedbacks=[]; if(!d.feedbackChats) d.feedbackChats={}; if(!d.inboxMessages) d.inboxMessages=[]; if(!d.shareInvites) d.shareInvites=[]; return d; } } catch(e) {}
-  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: 25565, changelogs: [], apiKeys: [], feedbacks: [], feedbackChats: {}, inboxMessages: [], shareInvites: [] };
+  try { if (fs.existsSync(DB_FILE)) { const d=JSON.parse(fs.readFileSync(DB_FILE,'utf8')); if(!d.changelogs) d.changelogs=[]; if(!d.apiKeys) d.apiKeys=[]; if(!d.feedbacks) d.feedbacks=[]; if(!d.feedbackChats) d.feedbackChats={}; if(!d.inboxMessages) d.inboxMessages=[]; if(!d.shareInvites) d.shareInvites=[]; if(!d.mcClientServers) d.mcClientServers=[]; return d; } } catch(e) {}
+  return { users: [], inviteCodes: {}, blacklisted: [], mcPorts: 25565, changelogs: [], apiKeys: [], feedbacks: [], feedbackChats: {}, inboxMessages: [], shareInvites: [], mcClientServers: [] };
 }
 
 let saveDBPending = false;
@@ -2339,25 +2339,119 @@ app.post('/api/v1/feedback-reply', (req, res) => {
   res.json({ success: true });
 });
 
+const mcClientProcs = {};
+
+function assignMcClientPort() {
+  db.mcPorts = db.mcPorts || 25565;
+  return db.mcPorts++;
+}
+
+async function launchMcClientServer(server) {
+  const sDir = path.join(PROJECTS_DIR, 'mc-client', server.id);
+  if (!fs.existsSync(sDir)) fs.mkdirSync(sDir, { recursive: true });
+
+  let javaCmd = 'java';
+  const jreDir = path.join(PROJECTS_DIR, 'jre');
+  const jreBin = path.join(jreDir, 'bin', 'java');
+  try {
+    await execAsync('java -version', { shell: true });
+  } catch (e) {
+    if (!fs.existsSync(jreBin)) {
+      try {
+        await execAsync('curl -L -o jre.tar.gz https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jre_x64_linux_hotspot_21.0.2_13.tar.gz', { cwd: PROJECTS_DIR, shell: true });
+        await execAsync('mkdir -p jre && tar -xzf jre.tar.gz -C jre --strip-components=1', { cwd: PROJECTS_DIR, shell: true });
+      } catch (err) {}
+    }
+    javaCmd = fs.existsSync(jreBin) ? jreBin : 'java';
+  }
+
+  let bindIp = '0.0.0.0';
+  if (server.ip && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(server.ip)) bindIp = server.ip;
+  fs.writeFileSync(path.join(sDir, 'eula.txt'), 'eula=true\n');
+  fs.writeFileSync(path.join(sDir, 'server.properties'), `server-port=${server.port}\nserver-ip=${bindIp}\nonline-mode=false\nmotd=Hosted by Reboot Cord\n`);
+
+  const jarPath = path.join(sDir, 'server.jar');
+  if (!fs.existsSync(jarPath)) {
+    try {
+      if (server.serverType === 'Paper') {
+        const apiBase = 'https://api.papermc.io/v2/projects/paper';
+        const verRes = await axios.get(apiBase + '/versions/' + server.version);
+        const builds = verRes.data.builds;
+        const latestBuild = builds[builds.length - 1];
+        const dlUrl = apiBase + '/versions/' + server.version + '/builds/' + latestBuild + '/downloads/paper-' + server.version + '-' + latestBuild + '.jar';
+        await execAsync('curl -L -o server.jar "' + dlUrl + '"', { cwd: sDir, shell: true });
+      } else {
+        const man = await axios.get('https://launchermeta.mojang.com/mc/game/version_manifest.json');
+        const verEntry = man.data.versions.find(v => v.id === server.version);
+        if (verEntry) {
+          const vinfo = await axios.get(verEntry.url);
+          const serverUrl = vinfo.data.downloads.server.url;
+          await execAsync('curl -L -o server.jar "' + serverUrl + '"', { cwd: sDir, shell: true });
+        }
+      }
+    } catch (e) {
+      server.status = 'failed';
+      server.error = 'Failed to download server: ' + e.message;
+      saveDB();
+      return;
+    }
+  }
+  if (!fs.existsSync(jarPath)) {
+    server.status = 'failed';
+    server.error = 'Unsupported version or server type.';
+    saveDB();
+    return;
+  }
+
+  const proc = cp.spawn(javaCmd, ['-Xmx1024M', '-jar', 'server.jar', 'nogui'], { cwd: sDir, shell: true, detached: true });
+  mcClientProcs[server.id] = proc;
+  server.status = 'running';
+  server.error = null;
+  saveDB();
+
+  proc.on('error', (err) => {
+    server.status = 'failed';
+    server.error = err.message;
+    saveDB();
+  });
+
+  proc.on('close', () => {
+    if (mcClientProcs[server.id] === proc) delete mcClientProcs[server.id];
+    const current = (db.mcClientServers || []).find(s => s.id === server.id);
+    if (current && current.status !== 'stopped') {
+      current.status = 'restarting';
+      saveDB();
+      setTimeout(() => launchMcClientServer(current), 5000);
+    }
+  });
+}
+
 app.post('/api/minecraft/create', async (req, res) => {
-  res.json({ success: false, message: 'Minecraft hosting requires minecraft-manager.js module' });
+  const { version, ip, serverType } = req.body || {};
+  if (!version || !/^1\.\d+(\.\d+)?$/.test(version)) return res.json({ success: false, message: 'Enter a valid Minecraft version.' });
+  const id = 'mc-' + crypto.randomBytes(8).toString('hex');
+  const server = {
+    id,
+    version,
+    ip: ip || '',
+    serverType: serverType || 'Vanilla',
+    port: assignMcClientPort(),
+    status: 'starting',
+    error: null,
+    createdAt: Date.now(),
+    hosting: '24/7-cloud'
+  };
+  db.mcClientServers = db.mcClientServers || [];
+  db.mcClientServers.push(server);
+  saveDB();
+  res.json({ success: true, serverId: id, port: server.port, message: 'Server is starting and will stay online 24/7.' });
+  launchMcClientServer(server);
 });
 
 app.get('/api/minecraft/status/:serverId', (req, res) => {
-  const { serverId } = req.params;
-  const serverDir = path.join(PROJECTS_DIR, 'minecraft', serverId);
-  const configPath = path.join(serverDir, 'server-config.json');
-  
-  if (fs.existsSync(configPath)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      res.json({ success: true, status: config.status, config: config });
-    } catch (error) {
-      res.json({ success: false, message: 'Failed to read server config' });
-    }
-  } else {
-    res.json({ success: false, message: 'Server not found' });
-  }
+  const server = (db.mcClientServers || []).find(s => s.id === req.params.serverId);
+  if (!server) return res.json({ success: false, message: 'Server not found' });
+  res.json({ success: true, status: server.status, config: server });
 });
 
 app.use((err, req, res, next) => {
