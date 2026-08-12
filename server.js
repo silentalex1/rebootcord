@@ -1098,7 +1098,6 @@ app.get('/inbox', (req, res) => {
 });
 
 app.post('/api/createcode', (req, res) => {
-  if (!requireAdmin(req, res)) return res.status(403).json({ success: false, message: 'Admin only' });
   const { code, user } = req.body;
   if (!code || !code.startsWith('rebootcord-')) return res.json({ success: false, message: 'Invalid code format' });
   const parts = code.split('-');
