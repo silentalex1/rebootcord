@@ -243,10 +243,10 @@ function nextRestartDelay(id, hardBan) {
   const now = Date.now();
   const s = restartState[id] || (restartState[id] = { count: 0, windowStart: now, hardBanCount: 0, hardBanWindowStart: now });
   if (hardBan) {
-    if (now - s.hardBanWindowStart > 60 * 60 * 1000) { s.hardBanCount = 0; s.hardBanWindowStart = now; }
+    if (now - s.hardBanWindowStart > 2 * 60 * 60 * 1000) { s.hardBanCount = 0; s.hardBanWindowStart = now; }
     s.hardBanCount++;
-    if (s.hardBanCount > 3) return -1;
-    return 15 * 60 * 1000;
+    if (s.hardBanCount > 2) return -1;
+    return (30 * 60 * 1000) + Math.floor(Math.random() * 8 * 60 * 1000);
   }
   if (now - s.windowStart > 2 * 60 * 1000) { s.count = 0; s.windowStart = now; }
   s.count++;
@@ -254,21 +254,71 @@ function nextRestartDelay(id, hardBan) {
   return Math.min(3000 * Math.pow(2, s.count - 1), 60000);
 }
 function isCloudflareHardBan(lines) {
-  const text = lines.join('\n');
-  return /error code:\s*1015|you are being rate limited|banned you temporarily from accessing/i.test(text);
+  const text = Array.isArray(lines) ? lines.join('\n') : String(lines || '');
+  return /error code:\s*1015|you are being rate limited|banned you temporarily from accessing|cf-error-details|cf-footer-item-ip|cf-footer-ip|cdn-cgi\/challenge-platform|attention required!|sorry, you have been blocked|cloudflare ray id/i.test(text);
+}
+function isHtmlNoise(line) {
+  const t = String(line || '');
+  if (!t.trim()) return false;
+  if (/cf-error|cf-footer|cdn-cgi\/|cloudflare ray id|window\._cf_translation|__cf\$cv\$params|cf-footer-item-ip/i.test(t)) return true;
+  return /<!DOCTYPE html|<html[\s>]|<head[\s>]|<body[\s>]|<script[\s>]|<span[\s>]|<div[\s>]/i.test(t);
+}
+function clipLogLine(line) {
+  const t = String(line || '').replace(/\s+/g, ' ').trim();
+  if (t.length <= 400) return t;
+  return t.slice(0, 400) + '…';
 }
 let globalDiscordBanUntil = 0;
 let globalDiscordBanStrikes = 0;
 let globalDiscordBanStrikeWindowStart = 0;
 function noteGlobalDiscordBan() {
   const now = Date.now();
-  if (now - globalDiscordBanStrikeWindowStart > 60 * 60 * 1000) { globalDiscordBanStrikes = 0; globalDiscordBanStrikeWindowStart = now; }
+  if (now - globalDiscordBanStrikeWindowStart > 2 * 60 * 60 * 1000) { globalDiscordBanStrikes = 0; globalDiscordBanStrikeWindowStart = now; }
   globalDiscordBanStrikes++;
-  const cooldown = Math.min(15 * 60 * 1000 * globalDiscordBanStrikes, 60 * 60 * 1000);
+  const cooldown = Math.min(30 * 60 * 1000 * globalDiscordBanStrikes, 2 * 60 * 60 * 1000);
   globalDiscordBanUntil = Math.max(globalDiscordBanUntil, now + cooldown);
 }
 function globalDiscordBanRemaining() {
   return Math.max(0, globalDiscordBanUntil - Date.now());
+}
+const discordStartQueue = [];
+let discordStartBusy = false;
+let discordLastStartAt = 0;
+const DISCORD_START_GAP_MS = 15000;
+function enqueueDiscordStart(run) {
+  return new Promise((resolve, reject) => {
+    discordStartQueue.push({ run, resolve, reject });
+    pumpDiscordStartQueue();
+  });
+}
+async function pumpDiscordStartQueue() {
+  if (discordStartBusy) return;
+  const remaining = globalDiscordBanRemaining();
+  if (remaining > 0) {
+    setTimeout(pumpDiscordStartQueue, Math.min(remaining + 250, 60000));
+    return;
+  }
+  const job = discordStartQueue.shift();
+  if (!job) return;
+  discordStartBusy = true;
+  const gap = Math.max(0, DISCORD_START_GAP_MS - (Date.now() - discordLastStartAt));
+  if (gap > 0) await new Promise(r => setTimeout(r, gap));
+  if (globalDiscordBanRemaining() > 0) {
+    discordStartQueue.unshift(job);
+    discordStartBusy = false;
+    setTimeout(pumpDiscordStartQueue, Math.min(globalDiscordBanRemaining() + 250, 60000));
+    return;
+  }
+  try {
+    discordLastStartAt = Date.now();
+    await job.run();
+    job.resolve();
+  } catch (e) {
+    job.reject(e);
+  } finally {
+    discordStartBusy = false;
+    setImmediate(pumpDiscordStartQueue);
+  }
 }
 function noteStableRun(id, startedAt) {
   setTimeout(() => {
@@ -1784,11 +1834,11 @@ function detectCrashReason(lines, missingPkgs, lang) {
   if (/SyntaxError|IndentationError/i.test(text)) {
     return 'Your code has a syntax error. Check the traceback above for the exact file and line, fix it, then start again.';
   }
-  if (/error code:\s*1015|you are being rate limited|banned you temporarily from accessing/i.test(text)) {
-    return 'Discord (via Cloudflare) has temporarily blocked login attempts from this server\'s IP address. This is not caused by your bot\'s code, and it is not something more frequent restarts can fix — retrying rapidly only adds more blocked requests. Auto-restart has been switched to a much longer, spaced-out schedule to let the block clear.';
+  if (/error code:\s*1015|you are being rate limited|banned you temporarily from accessing|cf-error-details|cf-footer-item-ip|cdn-cgi\/challenge-platform/i.test(text)) {
+    return 'Discord blocked this host IP through Cloudflare (error 1015). That is an IP-level login block, not a bug in your bot. Rapid restarts make it last longer, so this host will wait and start bots one at a time.';
   }
   if (/RateLimited|429 Too Many Requests|Cloudflare/i.test(text)) {
-    return 'The bot is being rate limited by Discord. It will back off and retry automatically.';
+    return 'Discord is rate limiting this host. The bot will wait and retry automatically.';
   }
   return null;
 }
@@ -1842,85 +1892,105 @@ async function launchGenericProject(p, members) {
     args = [mainFile];
   }
 
-  const startedAt = Date.now();
-  const proc = cp.spawn(cmd, args, { cwd: pDir, env: envVars, shell: p.lang === 'Python' ? false : true, detached: true });
-  procs[p.id] = proc;
-  noteStableRun(p.id, startedAt);
-
-  const missingPkgs = new Set();
-  const recentLines = [];
-  function trackLine(line) {
-    recentLines.push(line);
-    if (recentLines.length > 80) recentLines.shift();
+  const queued = discordStartBusy || discordStartQueue.length > 0 || globalDiscordBanRemaining() > 0;
+  if (queued) {
+    const ban = globalDiscordBanRemaining();
+    if (ban > 0) logAll(`[System] Discord login is paused because this host IP is blocked. Waiting about ${Math.ceil(ban / 60000)} minute(s).`, 'warn');
+    else logAll('[System] Waiting for a Discord login slot so this host IP is not rate-limited.', 'sys');
   }
 
-  proc.on('error', (err) => {
-    logAll(`[System] Bot failed to start: ${err.message}`, 'err');
-    if (procs[p.id] === proc) delete procs[p.id];
-    p.running = false;
-    saveDB();
-    statusAll(false);
-  });
+  await enqueueDiscordStart(async () => {
+    if (!p.running || intentionalStops.has(p.id)) return;
+    if (procs[p.id]) return;
 
-  proc.stdout.on('data', d => {
-    d.toString().split('\n').forEach(line => {
-      if (!line.trim()) return;
-      trackLine(line);
-      logAll(line.trim(), 'info');
-    });
-  });
+    const startedAt = Date.now();
+    const proc = cp.spawn(cmd, args, { cwd: pDir, env: envVars, shell: p.lang === 'Python' ? false : true, detached: true });
+    procs[p.id] = proc;
+    noteStableRun(p.id, startedAt);
 
-  proc.stderr.on('data', d => {
-    d.toString().split('\n').forEach(line => {
-      if (!line.trim()) return;
-      trackLine(line);
-      if (line.includes('INFO') || line.includes('discord.gateway') || line.includes('discord.client') || line.includes('Logged in as')) {
-        logAll(line.trim(), 'ok');
+    const missingPkgs = new Set();
+    const recentLines = [];
+    let htmlNoticeSent = false;
+    function trackLine(line) {
+      recentLines.push(line);
+      if (recentLines.length > 80) recentLines.shift();
+    }
+    function handleProcLine(line, fallbackType) {
+      const raw = String(line || '');
+      if (!raw.trim()) return;
+      if (isHtmlNoise(raw) || isCloudflareHardBan([raw])) {
+        trackLine('error code: 1015 you are being rate limited');
+        if (!htmlNoticeSent) {
+          htmlNoticeSent = true;
+          logAll('[System] Discord (Cloudflare) blocked this login from the host IP. Your bot code is not the cause.', 'err');
+        }
+        return;
+      }
+      trackLine(raw);
+      const clipped = clipLogLine(raw);
+      if (raw.includes('INFO') || raw.includes('discord.gateway') || raw.includes('discord.client') || raw.includes('Logged in as')) {
+        logAll(clipped, 'ok');
       } else {
-        logAll(line.trim(), 'err');
-        const match = line.match(/ModuleNotFoundError: No module named '([^']+)'/) || line.match(/Cannot find module '([^']+)'/);
+        logAll(clipped, fallbackType);
+        const match = raw.match(/ModuleNotFoundError: No module named '([^']+)'/) || raw.match(/Cannot find module '([^']+)'/);
         if (match && match[1]) missingPkgs.add(match[1]);
       }
-    });
-  });
+    }
 
-  proc.on('close', (code) => {
-    if (procs[p.id] === proc) delete procs[p.id];
-    const wasIntentional = intentionalStops.has(p.id);
-    intentionalStops.delete(p.id);
-    p.running = false;
-    saveDB();
-    statusAll(false);
-    if (wasIntentional) {
-      logAll('[System] Process exited.', 'sys');
-      return;
-    }
-    const reason = detectCrashReason(recentLines, missingPkgs, p.lang);
-    if (reason) logAll('[System] ' + reason, 'err');
-    if (missingPkgs.size > 0) {
-      logAll('[System] Bot stopped due to missing dependencies. Fix and start manually.', 'err');
-      return;
-    }
-    const hardBan = isCloudflareHardBan(recentLines);
-    if (hardBan) noteGlobalDiscordBan();
-    let delay = nextRestartDelay(p.id, hardBan);
-    if (delay === -1) {
-      logAll(hardBan
-        ? '[System] Discord is still blocking login attempts from this server after several tries. Auto-restart paused for now — wait longer before starting manually, since retrying immediately will likely renew the block.'
-        : '[System] Bot crashed repeatedly. Auto-restart paused, check your code/token and start manually.', 'err');
-      return;
-    }
-    const sharedBanRemaining = globalDiscordBanRemaining();
-    if (sharedBanRemaining > delay) {
-      delay = sharedBanRemaining + Math.floor(Math.random() * 30000);
-      logAll('[System] Another bot on this server hit Discord\'s Cloudflare block, so this restart is being held back too to avoid making it worse.', 'warn');
-    }
-    logAll(`[System] Process exited unexpectedly (code ${code}). Restarting in ${Math.round(delay / 1000)}s...`, 'warn');
-    setTimeout(() => {
-      const stillExists = findOwnerAndProject(p.id).p;
-      if (!stillExists) return;
-      launchGenericProject(p, members).catch(e => logAll('[System] Restart failed: ' + e.message, 'err'));
-    }, delay);
+    proc.on('error', (err) => {
+      logAll(`[System] Bot failed to start: ${err.message}`, 'err');
+      if (procs[p.id] === proc) delete procs[p.id];
+      p.running = false;
+      saveDB();
+      statusAll(false);
+    });
+
+    proc.stdout.on('data', d => {
+      d.toString().split('\n').forEach(line => handleProcLine(line, 'info'));
+    });
+
+    proc.stderr.on('data', d => {
+      d.toString().split('\n').forEach(line => handleProcLine(line, 'err'));
+    });
+
+    proc.on('close', (code) => {
+      if (procs[p.id] === proc) delete procs[p.id];
+      const wasIntentional = intentionalStops.has(p.id);
+      intentionalStops.delete(p.id);
+      p.running = false;
+      saveDB();
+      statusAll(false);
+      if (wasIntentional) {
+        logAll('[System] Process exited.', 'sys');
+        return;
+      }
+      const reason = detectCrashReason(recentLines, missingPkgs, p.lang);
+      if (reason) logAll('[System] ' + reason, 'err');
+      if (missingPkgs.size > 0) {
+        logAll('[System] Bot stopped due to missing dependencies. Fix and start manually.', 'err');
+        return;
+      }
+      const hardBan = isCloudflareHardBan(recentLines);
+      if (hardBan) noteGlobalDiscordBan();
+      let delay = nextRestartDelay(p.id, hardBan);
+      if (delay === -1) {
+        logAll(hardBan
+          ? '[System] Discord is still blocking logins from this host IP. Auto-restart paused. Wait before starting manually or the block will reset.'
+          : '[System] Bot crashed repeatedly. Auto-restart paused, check your code/token and start manually.', 'err');
+        return;
+      }
+      const sharedBanRemaining = globalDiscordBanRemaining();
+      if (sharedBanRemaining > delay) {
+        delay = sharedBanRemaining + Math.floor(Math.random() * 120000);
+        logAll('[System] Discord login is frozen for this host IP, so this restart is delayed with the rest of the queue.', 'warn');
+      }
+      logAll(`[System] Process exited unexpectedly (code ${code}). Restarting in ${Math.round(delay / 1000)}s...`, 'warn');
+      setTimeout(() => {
+        const stillExists = findOwnerAndProject(p.id).p;
+        if (!stillExists) return;
+        launchGenericProject(p, members).catch(e => logAll('[System] Restart failed: ' + e.message, 'err'));
+      }, delay);
+    });
   });
 }
 
@@ -1942,8 +2012,8 @@ async function startProjectHandler(req, res) {
     const banRemaining = globalDiscordBanRemaining();
     if (banRemaining > 0) {
       const mins = Math.ceil(banRemaining / 60000);
-      broadcastToMembers(members, { event: 'log', projectId: p.id, msg: `[System] Discord is currently blocking login attempts from this server (Cloudflare error 1015). Starting now would only extend the block. Try again in about ${mins} minute${mins === 1 ? '' : 's'}.`, type: 'err' });
-      return res.json({ success: false, discordBanned: true, retryAfterMs: banRemaining, message: `Discord is blocking logins from this server. Try again in ~${mins} minute${mins === 1 ? '' : 's'}.` });
+      broadcastToMembers(members, { event: 'log', projectId: p.id, msg: `[System] Discord is blocking logins from this host IP (Cloudflare 1015). Starting now would extend the block. Try again in about ${mins} minute${mins === 1 ? '' : 's'}.`, type: 'err' });
+      return res.json({ success: false, discordBanned: true, retryAfterMs: banRemaining, message: `Discord is blocking logins from this host IP. Try again in ~${mins} minute${mins === 1 ? '' : 's'}.` });
     }
   }
 
@@ -1957,14 +2027,26 @@ async function startProjectHandler(req, res) {
   saveDB();
   statusAll(true);
 
-  if (p.type === 'minecraft') {
-    intentionalStops.delete(p.id);
-    await launchMinecraftProject(p, members);
-  } else {
-    await launchGenericProject(p, members);
+  try {
+    if (p.type === 'minecraft') {
+      intentionalStops.delete(p.id);
+      await launchMinecraftProject(p, members);
+    } else {
+      launchGenericProject(p, members).catch(e => {
+        p.running = false;
+        saveDB();
+        statusAll(false);
+        broadcastToMembers(members, { event: 'log', projectId: p.id, msg: '[System] Failed to start: ' + (e && e.message ? e.message : 'unknown error'), type: 'err' });
+      });
+    }
+    res.json({ success: true });
+  } catch (e) {
+    p.running = false;
+    saveDB();
+    statusAll(false);
+    broadcastToMembers(members, { event: 'log', projectId: p.id, msg: '[System] Failed to start: ' + (e && e.message ? e.message : 'unknown error'), type: 'err' });
+    if (!res.headersSent) res.json({ success: false, message: 'Failed to start' });
   }
-
-  res.json({ success: true });
 }
 
 app.post('/api/projects/:id/start', startProjectHandler);
