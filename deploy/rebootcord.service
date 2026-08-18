@@ -1,0 +1,22 @@
+[Unit]
+Description=Reboot Cord
+After=network.target
+
+[Service]
+Type=simple
+User=rebootcord
+Group=rebootcord
+WorkingDirectory=/opt/rebootcord
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+Environment=NODE_ENV=production
+Environment=PORT=1000
+Environment=MC_PORT_MIN=25565
+Environment=MC_PORT_MAX=25864
+OOMPolicy=continue
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
