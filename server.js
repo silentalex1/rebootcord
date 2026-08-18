@@ -293,22 +293,11 @@ function enqueueDiscordStart(run) {
 }
 async function pumpDiscordStartQueue() {
   if (discordStartBusy) return;
-  const remaining = globalDiscordBanRemaining();
-  if (remaining > 0) {
-    setTimeout(pumpDiscordStartQueue, Math.min(remaining + 250, 60000));
-    return;
-  }
   const job = discordStartQueue.shift();
   if (!job) return;
   discordStartBusy = true;
   const gap = Math.max(0, DISCORD_START_GAP_MS - (Date.now() - discordLastStartAt));
   if (gap > 0) await new Promise(r => setTimeout(r, gap));
-  if (globalDiscordBanRemaining() > 0) {
-    discordStartQueue.unshift(job);
-    discordStartBusy = false;
-    setTimeout(pumpDiscordStartQueue, Math.min(globalDiscordBanRemaining() + 250, 60000));
-    return;
-  }
   try {
     discordLastStartAt = Date.now();
     await job.run();
@@ -1892,11 +1881,8 @@ async function launchGenericProject(p, members) {
     args = [mainFile];
   }
 
-  const queued = discordStartBusy || discordStartQueue.length > 0 || globalDiscordBanRemaining() > 0;
-  if (queued) {
-    const ban = globalDiscordBanRemaining();
-    if (ban > 0) logAll(`[System] Discord login is paused because this host IP is blocked. Waiting about ${Math.ceil(ban / 60000)} minute(s).`, 'warn');
-    else logAll('[System] Waiting for a Discord login slot so this host IP is not rate-limited.', 'sys');
+  if (discordStartBusy || discordStartQueue.length > 0) {
+    logAll('[System] Waiting for a Discord login slot so this host IP is not rate-limited.', 'sys');
   }
 
   await enqueueDiscordStart(async () => {
@@ -2007,15 +1993,6 @@ async function startProjectHandler(req, res) {
 
   const pDir = path.join(PROJECTS_DIR, String(p.id));
   if (!fs.existsSync(pDir)) fs.mkdirSync(pDir, { recursive: true });
-
-  if (p.type !== 'minecraft') {
-    const banRemaining = globalDiscordBanRemaining();
-    if (banRemaining > 0) {
-      const mins = Math.ceil(banRemaining / 60000);
-      broadcastToMembers(members, { event: 'log', projectId: p.id, msg: `[System] Discord is blocking logins from this host IP (Cloudflare 1015). Starting now would extend the block. Try again in about ${mins} minute${mins === 1 ? '' : 's'}.`, type: 'err' });
-      return res.json({ success: false, discordBanned: true, retryAfterMs: banRemaining, message: `Discord is blocking logins from this host IP. Try again in ~${mins} minute${mins === 1 ? '' : 's'}.` });
-    }
-  }
 
   intentionalStops.add(p.id);
   if (procs[p.id]) {
