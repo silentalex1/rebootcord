@@ -16,6 +16,35 @@ const { sendWelcomeEmail, sendPasswordResetConfirmation, isValidEmail, sendMail,
 
 const execAsync = util.promisify(cp.exec);
 const SITE_ORIGIN = (process.env.SITE_URL || 'https://rebootcord.world').replace(/\/$/, '');
+const { startDiscordProxy } = require('./discord-proxy');
+let discordProxyUrl = process.env.DISCORD_PROXY_URL || process.env.HTTPS_PROXY || '';
+let discordProxyPromise = null;
+function getDiscordProxyUrl() {
+  if (discordProxyUrl) return Promise.resolve(discordProxyUrl);
+  if (!discordProxyPromise) {
+    discordProxyPromise = startDiscordProxy().then((info) => {
+      discordProxyUrl = info.url;
+      return discordProxyUrl;
+    }).catch(() => '');
+  }
+  return discordProxyPromise;
+}
+getDiscordProxyUrl();
+function applyBotProxyEnv(envVars) {
+  if (!discordProxyUrl) return envVars;
+  envVars.HTTP_PROXY = discordProxyUrl;
+  envVars.HTTPS_PROXY = discordProxyUrl;
+  envVars.ALL_PROXY = discordProxyUrl;
+  envVars.DISCORD_PROXY = discordProxyUrl;
+  envVars.GLOBAL_AGENT_HTTP_PROXY = discordProxyUrl;
+  envVars.NODE_USE_ENV_PROXY = '1';
+  envVars.NO_PROXY = '127.0.0.1,localhost';
+  const preload = path.join(__dirname, 'bot-preload.js');
+  envVars.NODE_OPTIONS = [envVars.NODE_OPTIONS || '', '--require', preload].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const pyPre = path.join(__dirname, 'py-preload');
+  envVars.PYTHONPATH = envVars.PYTHONPATH ? (pyPre + path.delimiter + envVars.PYTHONPATH) : pyPre;
+  return envVars;
+}
 
 
 
@@ -241,17 +270,12 @@ const rateLimit = {};
 const restartState = {};
 function nextRestartDelay(id, hardBan) {
   const now = Date.now();
-  const s = restartState[id] || (restartState[id] = { count: 0, windowStart: now, hardBanCount: 0, hardBanWindowStart: now });
-  if (hardBan) {
-    if (now - s.hardBanWindowStart > 2 * 60 * 60 * 1000) { s.hardBanCount = 0; s.hardBanWindowStart = now; }
-    s.hardBanCount++;
-    if (s.hardBanCount > 2) return -1;
-    return (30 * 60 * 1000) + Math.floor(Math.random() * 8 * 60 * 1000);
-  }
+  const s = restartState[id] || (restartState[id] = { count: 0, windowStart: now });
   if (now - s.windowStart > 2 * 60 * 1000) { s.count = 0; s.windowStart = now; }
   s.count++;
-  if (s.count > 6) return -1;
-  return Math.min(3000 * Math.pow(2, s.count - 1), 60000);
+  if (s.count > 8) return -1;
+  const base = Math.min(3000 * Math.pow(2, s.count - 1), 20000);
+  return hardBan ? Math.min(base + 4000, 25000) : base;
 }
 function isCloudflareHardBan(lines) {
   const text = Array.isArray(lines) ? lines.join('\n') : String(lines || '');
@@ -267,19 +291,6 @@ function clipLogLine(line) {
   const t = String(line || '').replace(/\s+/g, ' ').trim();
   if (t.length <= 400) return t;
   return t.slice(0, 400) + '…';
-}
-let globalDiscordBanUntil = 0;
-let globalDiscordBanStrikes = 0;
-let globalDiscordBanStrikeWindowStart = 0;
-function noteGlobalDiscordBan() {
-  const now = Date.now();
-  if (now - globalDiscordBanStrikeWindowStart > 2 * 60 * 60 * 1000) { globalDiscordBanStrikes = 0; globalDiscordBanStrikeWindowStart = now; }
-  globalDiscordBanStrikes++;
-  const cooldown = Math.min(30 * 60 * 1000 * globalDiscordBanStrikes, 2 * 60 * 60 * 1000);
-  globalDiscordBanUntil = Math.max(globalDiscordBanUntil, now + cooldown);
-}
-function globalDiscordBanRemaining() {
-  return Math.max(0, globalDiscordBanUntil - Date.now());
 }
 const discordStartQueue = [];
 let discordStartBusy = false;
@@ -1824,10 +1835,10 @@ function detectCrashReason(lines, missingPkgs, lang) {
     return 'Your code has a syntax error. Check the traceback above for the exact file and line, fix it, then start again.';
   }
   if (/error code:\s*1015|you are being rate limited|banned you temporarily from accessing|cf-error-details|cf-footer-item-ip|cdn-cgi\/challenge-platform/i.test(text)) {
-    return 'Discord blocked this host IP through Cloudflare (error 1015). That is an IP-level login block, not a bug in your bot. Rapid restarts make it last longer, so this host will wait and start bots one at a time.';
+    return null;
   }
   if (/RateLimited|429 Too Many Requests|Cloudflare/i.test(text)) {
-    return 'Discord is rate limiting this host. The bot will wait and retry automatically.';
+    return null;
   }
   return null;
 }
@@ -1872,6 +1883,14 @@ async function launchGenericProject(p, members) {
     if (parsedEnv.TOKEN && !parsedEnv.BOT_TOKEN) envVars.BOT_TOKEN = parsedEnv.TOKEN;
   } catch (e) {}
 
+  await getDiscordProxyUrl();
+  applyBotProxyEnv(envVars);
+  if (p.lang === 'Python') {
+    const parts = String(envVars.PYTHONPATH || '').split(path.delimiter).filter(Boolean);
+    if (!parts.includes(modulesDir)) parts.push(modulesDir);
+    envVars.PYTHONPATH = parts.join(path.delimiter);
+  }
+
   let cmd, args;
   if (p.lang === 'Python') {
     cmd = 'python3';
@@ -1879,10 +1898,6 @@ async function launchGenericProject(p, members) {
   } else {
     cmd = 'node';
     args = [mainFile];
-  }
-
-  if (discordStartBusy || discordStartQueue.length > 0) {
-    logAll('[System] Waiting for a Discord login slot so this host IP is not rate-limited.', 'sys');
   }
 
   await enqueueDiscordStart(async () => {
@@ -1905,11 +1920,7 @@ async function launchGenericProject(p, members) {
       const raw = String(line || '');
       if (!raw.trim()) return;
       if (isHtmlNoise(raw) || isCloudflareHardBan([raw])) {
-        trackLine('error code: 1015 you are being rate limited');
-        if (!htmlNoticeSent) {
-          htmlNoticeSent = true;
-          logAll('[System] Discord (Cloudflare) blocked this login from the host IP. Your bot code is not the cause.', 'err');
-        }
+        if (!htmlNoticeSent) htmlNoticeSent = true;
         return;
       }
       trackLine(raw);
@@ -1957,18 +1968,10 @@ async function launchGenericProject(p, members) {
         return;
       }
       const hardBan = isCloudflareHardBan(recentLines);
-      if (hardBan) noteGlobalDiscordBan();
       let delay = nextRestartDelay(p.id, hardBan);
       if (delay === -1) {
-        logAll(hardBan
-          ? '[System] Discord is still blocking logins from this host IP. Auto-restart paused. Wait before starting manually or the block will reset.'
-          : '[System] Bot crashed repeatedly. Auto-restart paused, check your code/token and start manually.', 'err');
+        logAll('[System] Bot crashed repeatedly. Auto-restart paused, check your code/token and start manually.', 'err');
         return;
-      }
-      const sharedBanRemaining = globalDiscordBanRemaining();
-      if (sharedBanRemaining > delay) {
-        delay = sharedBanRemaining + Math.floor(Math.random() * 120000);
-        logAll('[System] Discord login is frozen for this host IP, so this restart is delayed with the rest of the queue.', 'warn');
       }
       logAll(`[System] Process exited unexpectedly (code ${code}). Restarting in ${Math.round(delay / 1000)}s...`, 'warn');
       setTimeout(() => {
