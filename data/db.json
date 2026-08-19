@@ -1,0 +1,16 @@
+{
+  "users": [],
+  "inviteCodes": {},
+  "blacklisted": [],
+  "mcPorts": 25565,
+  "changelogs": [],
+  "apiKeys": [],
+  "feedbacks": [],
+  "feedbackChats": {},
+  "inboxMessages": [],
+  "shareInvites": [],
+  "mcClientServers": [],
+  "emailConfigs": {},
+  "adminApiKeys": [],
+  "adminBootstrapDone": false
+}

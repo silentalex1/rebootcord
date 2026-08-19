@@ -1,0 +1,34 @@
+[Unit]
+Description=Reboot Cord
+After=network.target
+
+[Service]
+Type=simple
+User=rebootcord
+Group=rebootcord
+WorkingDirectory=/opt/rebootcord
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+Environment=NODE_ENV=production
+Environment=PORT=1000
+Environment=HOST=127.0.0.1
+Environment=SITE_URL=https://rebootcord.world
+Environment=MC_PORT_MIN=25565
+Environment=MC_PORT_MAX=25864
+EnvironmentFile=-/opt/rebootcord/.env
+OOMPolicy=continue
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/rebootcord/data /opt/rebootcord/projects_data /opt/rebootcord/minecraft-data
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
